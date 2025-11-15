@@ -508,7 +508,8 @@ class AndroidPlatform extends PlatformTarget
 		context.ANDROID_GRADLE_PLUGIN = project.config.getString("android.gradle-plugin", "8.7.3");
 		context.ANDROID_USE_ANDROIDX = project.config.getString("android.useAndroidX", "true");
 		context.ANDROID_ENABLE_JETIFIER = project.config.getString("android.enableJetifier", "false");
-		context.ANDROID_GRADLE_PROPERTIES = project.config.getKeyValueArray("android.gradle-properties");
+        context.ANDROID_GRADLE_PROPERTIES = project.config.getKeyValueArray("android.gradle-properties");
+        if (context.ANDROID_GRADLE_PROPERTIES == null) context.ANDROID_GRADLE_PROPERTIES = [];
 		context.ANDROID_DISPLAY_CUTOUT = project.config.getString("android.layoutInDisplayCutoutMode", "default");
 
 		context.ANDROID_APPLICATION = project.config.getKeyValueArray("android.application", {
@@ -530,7 +531,8 @@ class AndroidPlatform extends PlatformTarget
 		});
 		context.ANDROID_ACCEPT_FILE_INTENT = project.config.getArrayString("android.accept-file-intent", []);
 
-		context.ANDROID_META_DATA = project.config.getKeyValueArray("android.meta-data");
+        context.ANDROID_META_DATA = project.config.getKeyValueArray("android.meta-data");
+        if (context.ANDROID_META_DATA == null) context.ANDROID_META_DATA = [];
 		var hasOptimizedFor = false;
 		for (attribute in context.ANDROID_META_DATA)
 		{

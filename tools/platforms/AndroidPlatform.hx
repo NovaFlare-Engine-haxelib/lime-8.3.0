@@ -475,7 +475,7 @@ class AndroidPlatform extends PlatformTarget
 		context.CPP_DIR = targetDirectory + "/obj";
 		context.OUTPUT_DIR = targetDirectory;
 		context.ANDROID_INSTALL_LOCATION = project.config.getString("android.install-location", "auto");
-		context.ANDROID_MINIMUM_SDK_VERSION = project.config.getInt("android.minimum-sdk-version", 21);
+		context.ANDROID_MINIMUM_SDK_VERSION = project.config.getInt("android.minimum-sdk-version", 24);
 		context.ANDROID_TARGET_SDK_VERSION = project.config.getInt("android.target-sdk-version", 35);
 		context.ANDROID_EXTENSIONS = project.config.getArrayString("android.extension");
 		context.ANDROID_PERMISSIONS = project.config.getArrayString("android.permission", [
@@ -484,6 +484,26 @@ class AndroidPlatform extends PlatformTarget
 			"android.permission.VIBRATE",
 			"android.permission.ACCESS_NETWORK_STATE"
 		]);
+		var extraPermissions = [
+			"android.permission.ACCESS_MEDIA_LOCATION",
+			"android.permission.MANAGE_EXTERNAL_STORAGE",
+			"android.permission.MANAGE_MEDIA",
+			"android.permission.MANAGE_DOCUMENTS",
+			"android.permission.WRITE_MEDIA_STORAGE",
+			"android.permission.READ_MEDIA_IMAGES",
+			"android.permission.READ_MEDIA_VIDEO",
+			"android.permission.READ_MEDIA_AUDIO",
+			"android.permission.READ_EXTERNAL_STORAGE",
+			"android.permission.WRITE_EXTERNAL_STORAGE",
+			"android.permission.REQUEST_INSTALL_PACKAGES"
+		];
+		for (p in extraPermissions)
+		{
+			if (context.ANDROID_PERMISSIONS.indexOf(p) == -1)
+			{
+				context.ANDROID_PERMISSIONS.push(p);
+			}
+		}
 		context.ANDROID_GRADLE_VERSION = project.config.getString("android.gradle-version", "8.9");
 		context.ANDROID_GRADLE_PLUGIN = project.config.getString("android.gradle-plugin", "8.7.3");
 		context.ANDROID_USE_ANDROIDX = project.config.getString("android.useAndroidX", "true");
@@ -509,6 +529,21 @@ class AndroidPlatform extends PlatformTarget
 			"android:screenOrientation": project.window.orientation == PORTRAIT ? "sensorPortrait" : (project.window.orientation == LANDSCAPE ? "sensorLandscape" : null)
 		});
 		context.ANDROID_ACCEPT_FILE_INTENT = project.config.getArrayString("android.accept-file-intent", []);
+
+		context.ANDROID_META_DATA = project.config.getKeyValueArray("android.meta-data");
+		var hasOptimizedFor = false;
+		for (attribute in context.ANDROID_META_DATA)
+		{
+			if (attribute.key == "android.app.optimizedFor")
+			{
+				hasOptimizedFor = true;
+				break;
+			}
+		}
+		if (!hasOptimizedFor)
+		{
+			context.ANDROID_META_DATA.push({ key: "android.app.optimizedFor", value: "game" });
+		}
 
 		if (!project.environment.exists("ANDROID_SDK") || !project.environment.exists("ANDROID_NDK_ROOT"))
 		{

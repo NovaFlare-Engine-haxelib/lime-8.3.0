@@ -29,6 +29,7 @@
 #include "SDL_androidwindow.h"
 #include "../SDL_sysvideo.h"
 #include "../../events/SDL_events_c.h"
+#include <EGL/egl.h>
 
 /* Can't include sysaudio "../../audio/android/SDL_androidaudio.h"
  * because of THIS redefinition */
@@ -69,6 +70,8 @@ static int SDL_NumberOfEvents(Uint32 type)
     return SDL_PeepEvents(NULL, 0, SDL_PEEKEVENT, type, type);
 }
 
+static int saved_swap_interval = 0;
+
 #ifdef SDL_VIDEO_OPENGL_EGL
 static void android_egl_context_restore(SDL_Window *window)
 {
@@ -82,6 +85,13 @@ static void android_egl_context_restore(SDL_Window *window)
             SDL_GL_MakeCurrent(window, (SDL_GLContext)data->egl_context);
             event.type = SDL_RENDER_DEVICE_RESET;
             SDL_PushEvent(&event);
+        }
+        if (saved_swap_interval != 0) {
+            if (SDL_GL_SetSwapInterval(saved_swap_interval) < 0) {
+                SDL_GL_SetSwapInterval(0);
+            }
+        } else {
+            SDL_GL_SetSwapInterval(0);
         }
         data->backup_done = 0;
     }
@@ -157,6 +167,7 @@ void Android_PumpEvents_Blocking(_THIS)
 
             /* Android_PauseSem was signaled */
             if (videodata->isPausing == 0) {
+                saved_swap_interval = SDL_GL_GetSwapInterval();
                 SDL_SendWindowEvent(Android_Window, SDL_WINDOWEVENT_MINIMIZED, 0, 0);
                 SDL_SendAppEvent(SDL_APP_WILLENTERBACKGROUND);
                 SDL_SendAppEvent(SDL_APP_DIDENTERBACKGROUND);
@@ -239,6 +250,7 @@ void Android_PumpEvents_NonBlocking(_THIS)
 
             /* Android_PauseSem was signaled */
             if (videodata->isPausing == 0) {
+                saved_swap_interval = SDL_GL_GetSwapInterval();
                 SDL_SendWindowEvent(Android_Window, SDL_WINDOWEVENT_MINIMIZED, 0, 0);
                 SDL_SendAppEvent(SDL_APP_WILLENTERBACKGROUND);
                 SDL_SendAppEvent(SDL_APP_DIDENTERBACKGROUND);

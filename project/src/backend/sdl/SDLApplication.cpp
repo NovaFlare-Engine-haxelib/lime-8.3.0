@@ -297,9 +297,23 @@ namespace lime {
 						ProcessWindowEvent (event);
 
 						if (!inBackground) {
-
-							RenderEvent::Dispatch (&renderEvent);
-
+							currentUpdate = SDL_GetTicks ();
+							double realDeltaTime = currentUpdate - lastUpdate;
+							lastUpdate = currentUpdate;
+							const double MAX_DELTA_TIME = 5 * framePeriod;
+							if (realDeltaTime > MAX_DELTA_TIME) {
+								realDeltaTime = MAX_DELTA_TIME;
+							}
+							accumulator += realDeltaTime;
+							if (accumulator >= framePeriod) {
+								applicationEvent.type = UPDATE;
+								applicationEvent.deltaTime = framePeriod;
+								ApplicationEvent::Dispatch (&applicationEvent);
+								RenderEvent::Dispatch (&renderEvent);
+								accumulator -= framePeriod;
+							} else {
+								RenderEvent::Dispatch (&renderEvent);
+							}
 						}
 
 						break;
@@ -309,9 +323,23 @@ namespace lime {
 						ProcessWindowEvent (event);
 
 						if (!inBackground) {
-
-							RenderEvent::Dispatch (&renderEvent);
-
+							currentUpdate = SDL_GetTicks ();
+							double realDeltaTime = currentUpdate - lastUpdate;
+							lastUpdate = currentUpdate;
+							const double MAX_DELTA_TIME = 5 * framePeriod;
+							if (realDeltaTime > MAX_DELTA_TIME) {
+								realDeltaTime = MAX_DELTA_TIME;
+							}
+							accumulator += realDeltaTime;
+							if (accumulator >= framePeriod) {
+								applicationEvent.type = UPDATE;
+								applicationEvent.deltaTime = framePeriod;
+								ApplicationEvent::Dispatch (&applicationEvent);
+								RenderEvent::Dispatch (&renderEvent);
+								accumulator -= framePeriod;
+							} else {
+								RenderEvent::Dispatch (&renderEvent);
+							}
 						}
 
 						break;

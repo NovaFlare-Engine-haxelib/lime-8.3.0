@@ -163,8 +163,8 @@ class AndroidPlatform extends PlatformTarget
 		{
 			var minSDKVer = project.config.getInt("android.minimum-sdk-version", 21);
 			//PLATFORM define needed for older ndk and gcc toolchain
-			var haxeParams = [hxml, "-D", "android", "-D", 'PLATFORM_NUMBER=$minSDKVer', "-D", 'PLATFORM=$minSDKVer'];
-			var cppParams = ["-Dandroid", '-DPLATFORM_NUMBER=$minSDKVer', '-DPLATFORM=$minSDKVer'];
+            var haxeParams = [hxml, "-D", "android", "-D", 'PLATFORM=$minSDKVer', "-D", 'HXCPP_ANDROID_PLATFORM=android-$minSDKVer'];
+            var cppParams = ["-Dandroid", '-DPLATFORM=$minSDKVer', '-DHXCPP_ANDROID_PLATFORM=android-$minSDKVer'];
 			var path = sourceSet + "/jniLibs/armeabi";
 			var suffix = ".so";
 
@@ -375,15 +375,14 @@ class AndroidPlatform extends PlatformTarget
 
 		var commands:Array<Array<String>> = [];
 		var minSDKVer = 21;
-		var platformNumberDefine = '-DPLATFORM_NUMBER=$minSDKVer';
-		// Required for older ndk and gcc toolchain
-		var platformDefine = '-DPLATFORM=$minSDKVer';
+        var platformDefine = '-DPLATFORM=$minSDKVer';
+        var hxcppAndroidDefine = '-DHXCPP_ANDROID_PLATFORM=android-$minSDKVer';
 
-		if (armv5) commands.push(["-Dandroid", platformDefine]);
-		if (armv7) commands.push(["-Dandroid", "-DHXCPP_ARMV7", platformDefine, platformNumberDefine]);
-		if (arm64) commands.push(["-Dandroid", "-DHXCPP_ARM64", platformDefine, platformNumberDefine]);
-		if (x86) commands.push(["-Dandroid", "-DHXCPP_X86", platformDefine, platformNumberDefine]);
-		if (x64) commands.push(["-Dandroid", "-DHXCPP_X86_64", platformDefine, platformNumberDefine]);
+        if (armv5) commands.push(["-Dandroid", platformDefine, hxcppAndroidDefine]);
+        if (armv7) commands.push(["-Dandroid", "-DHXCPP_ARMV7", platformDefine, hxcppAndroidDefine]);
+        if (arm64) commands.push(["-Dandroid", "-DHXCPP_ARM64", platformDefine, hxcppAndroidDefine]);
+        if (x86) commands.push(["-Dandroid", "-DHXCPP_X86", platformDefine, hxcppAndroidDefine]);
+        if (x64) commands.push(["-Dandroid", "-DHXCPP_X86_64", platformDefine, hxcppAndroidDefine]);
 
 		CPPHelper.rebuild(project, commands);
 	}

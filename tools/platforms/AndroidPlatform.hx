@@ -163,8 +163,8 @@ class AndroidPlatform extends PlatformTarget
 		{
 			var minSDKVer = project.config.getInt("android.minimum-sdk-version", 21);
 			//PLATFORM define needed for older ndk and gcc toolchain
-            var haxeParams = [hxml, "-D", "android", "-D", 'PLATFORM=$minSDKVer', "-D", 'HXCPP_ANDROID_PLATFORM=android-$minSDKVer'];
-            var cppParams = ["-Dandroid", '-DPLATFORM=$minSDKVer', '-DHXCPP_ANDROID_PLATFORM=android-$minSDKVer'];
+			var haxeParams = [hxml, "-D", "android", "-D", 'PLATFORM_NUMBER=$minSDKVer', "-D", 'PLATFORM=$minSDKVer'];
+			var cppParams = ["-Dandroid", '-DPLATFORM_NUMBER=$minSDKVer', '-DPLATFORM=$minSDKVer'];
 			var path = sourceSet + "/jniLibs/armeabi";
 			var suffix = ".so";
 
@@ -375,14 +375,15 @@ class AndroidPlatform extends PlatformTarget
 
 		var commands:Array<Array<String>> = [];
 		var minSDKVer = 21;
-        var platformDefine = '-DPLATFORM=$minSDKVer';
-        var hxcppAndroidDefine = '-DHXCPP_ANDROID_PLATFORM=android-$minSDKVer';
+		var platformNumberDefine = '-DPLATFORM_NUMBER=$minSDKVer';
+		// Required for older ndk and gcc toolchain
+		var platformDefine = '-DPLATFORM=$minSDKVer';
 
-        if (armv5) commands.push(["-Dandroid", platformDefine, hxcppAndroidDefine]);
-        if (armv7) commands.push(["-Dandroid", "-DHXCPP_ARMV7", platformDefine, hxcppAndroidDefine]);
-        if (arm64) commands.push(["-Dandroid", "-DHXCPP_ARM64", platformDefine, hxcppAndroidDefine]);
-        if (x86) commands.push(["-Dandroid", "-DHXCPP_X86", platformDefine, hxcppAndroidDefine]);
-        if (x64) commands.push(["-Dandroid", "-DHXCPP_X86_64", platformDefine, hxcppAndroidDefine]);
+		if (armv5) commands.push(["-Dandroid", platformDefine]);
+		if (armv7) commands.push(["-Dandroid", "-DHXCPP_ARMV7", platformDefine, platformNumberDefine]);
+		if (arm64) commands.push(["-Dandroid", "-DHXCPP_ARM64", platformDefine, platformNumberDefine]);
+		if (x86) commands.push(["-Dandroid", "-DHXCPP_X86", platformDefine, platformNumberDefine]);
+		if (x64) commands.push(["-Dandroid", "-DHXCPP_X86_64", platformDefine, platformNumberDefine]);
 
 		CPPHelper.rebuild(project, commands);
 	}
@@ -474,7 +475,7 @@ class AndroidPlatform extends PlatformTarget
 		context.CPP_DIR = targetDirectory + "/obj";
 		context.OUTPUT_DIR = targetDirectory;
 		context.ANDROID_INSTALL_LOCATION = project.config.getString("android.install-location", "auto");
-		context.ANDROID_MINIMUM_SDK_VERSION = project.config.getInt("android.minimum-sdk-version", 24);
+		context.ANDROID_MINIMUM_SDK_VERSION = project.config.getInt("android.minimum-sdk-version", 21);
 		context.ANDROID_TARGET_SDK_VERSION = project.config.getInt("android.target-sdk-version", 35);
 		context.ANDROID_EXTENSIONS = project.config.getArrayString("android.extension");
 		context.ANDROID_PERMISSIONS = project.config.getArrayString("android.permission", [
@@ -483,26 +484,6 @@ class AndroidPlatform extends PlatformTarget
 			"android.permission.VIBRATE",
 			"android.permission.ACCESS_NETWORK_STATE"
 		]);
-		var extraPermissions = [
-			"android.permission.ACCESS_MEDIA_LOCATION",
-			"android.permission.MANAGE_EXTERNAL_STORAGE",
-			"android.permission.MANAGE_MEDIA",
-			"android.permission.MANAGE_DOCUMENTS",
-			"android.permission.WRITE_MEDIA_STORAGE",
-			"android.permission.READ_MEDIA_IMAGES",
-			"android.permission.READ_MEDIA_VIDEO",
-			"android.permission.READ_MEDIA_AUDIO",
-			"android.permission.READ_EXTERNAL_STORAGE",
-			"android.permission.WRITE_EXTERNAL_STORAGE",
-			"android.permission.REQUEST_INSTALL_PACKAGES"
-		];
-		for (p in extraPermissions)
-		{
-			if (context.ANDROID_PERMISSIONS.indexOf(p) == -1)
-			{
-				context.ANDROID_PERMISSIONS.push(p);
-			}
-		}
 		context.ANDROID_GRADLE_VERSION = project.config.getString("android.gradle-version", "8.9");
 		context.ANDROID_GRADLE_PLUGIN = project.config.getString("android.gradle-plugin", "8.7.3");
 		context.ANDROID_USE_ANDROIDX = project.config.getString("android.useAndroidX", "true");
@@ -528,21 +509,6 @@ class AndroidPlatform extends PlatformTarget
 			"android:screenOrientation": project.window.orientation == PORTRAIT ? "sensorPortrait" : (project.window.orientation == LANDSCAPE ? "sensorLandscape" : null)
 		});
 		context.ANDROID_ACCEPT_FILE_INTENT = project.config.getArrayString("android.accept-file-intent", []);
-
-		context.ANDROID_META_DATA = project.config.getKeyValueArray("android.meta-data");
-		var hasOptimizedFor = false;
-		for (attribute in context.ANDROID_META_DATA)
-		{
-			if (attribute.key == "android.app.optimizedFor")
-			{
-				hasOptimizedFor = true;
-				break;
-			}
-		}
-		if (!hasOptimizedFor)
-		{
-			context.ANDROID_META_DATA.push({ key: "android.app.optimizedFor", value: "game" });
-		}
 
 		if (!project.environment.exists("ANDROID_SDK") || !project.environment.exists("ANDROID_NDK_ROOT"))
 		{

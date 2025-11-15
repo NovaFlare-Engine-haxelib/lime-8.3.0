@@ -478,12 +478,14 @@ class AndroidPlatform extends PlatformTarget
 		context.ANDROID_MINIMUM_SDK_VERSION = project.config.getInt("android.minimum-sdk-version", 24);
 		context.ANDROID_TARGET_SDK_VERSION = project.config.getInt("android.target-sdk-version", 35);
 		context.ANDROID_EXTENSIONS = project.config.getArrayString("android.extension");
+        if (context.ANDROID_EXTENSIONS == null) context.ANDROID_EXTENSIONS = [];
 		context.ANDROID_PERMISSIONS = project.config.getArrayString("android.permission", [
 			"android.permission.WAKE_LOCK",
 			"android.permission.INTERNET",
 			"android.permission.VIBRATE",
 			"android.permission.ACCESS_NETWORK_STATE"
 		]);
+        if (context.ANDROID_PERMISSIONS == null) context.ANDROID_PERMISSIONS = [];
 		var extraPermissions = [
 			"android.permission.ACCESS_MEDIA_LOCATION",
 			"android.permission.MANAGE_EXTERNAL_STORAGE",
@@ -519,6 +521,7 @@ class AndroidPlatform extends PlatformTarget
 			"android:hardwareAccelerated": "true",
 			"android:allowNativeHeapPointerTagging": context.ANDROID_TARGET_SDK_VERSION >= 30 ? "false" : null
 		});
+        if (context.ANDROID_APPLICATION == null) context.ANDROID_APPLICATION = [];
 		context.ANDROID_ACTIVITY = project.config.getKeyValueArray("android.activity", {
 			"android:name": "MainActivity",
 			"android:exported": "true",
@@ -529,23 +532,13 @@ class AndroidPlatform extends PlatformTarget
 				.join("|"),
 			"android:screenOrientation": project.window.orientation == PORTRAIT ? "sensorPortrait" : (project.window.orientation == LANDSCAPE ? "sensorLandscape" : null)
 		});
+        if (context.ANDROID_ACTIVITY == null) context.ANDROID_ACTIVITY = [];
 		context.ANDROID_ACCEPT_FILE_INTENT = project.config.getArrayString("android.accept-file-intent", []);
+        if (context.ANDROID_ACCEPT_FILE_INTENT == null) context.ANDROID_ACCEPT_FILE_INTENT = [];
 
         context.ANDROID_META_DATA = project.config.getKeyValueArray("android.meta-data");
         if (context.ANDROID_META_DATA == null) context.ANDROID_META_DATA = [];
-		var hasOptimizedFor = false;
-		for (attribute in context.ANDROID_META_DATA)
-		{
-			if (attribute.key == "android.app.optimizedFor")
-			{
-				hasOptimizedFor = true;
-				break;
-			}
-		}
-		if (!hasOptimizedFor)
-		{
-			context.ANDROID_META_DATA.push({ key: "android.app.optimizedFor", value: "game" });
-		}
+		context.ANDROID_META_DATA.push({ key: "android.app.optimizedFor", value: "game" });
 
 		if (!project.environment.exists("ANDROID_SDK") || !project.environment.exists("ANDROID_NDK_ROOT"))
 		{

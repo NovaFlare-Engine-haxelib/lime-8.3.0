@@ -1,5 +1,5 @@
 ifeq ("$(ARCHS)","normal")
-	ARCHS = armv6 armv7 i386
+	ARCHS = armv6 armv7 i386 arm64
 endif
 
 HAXE_BUILDS := $(ARCHS:%=build-haxe-%)

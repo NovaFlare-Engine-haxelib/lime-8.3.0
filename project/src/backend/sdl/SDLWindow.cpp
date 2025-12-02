@@ -75,6 +75,7 @@ namespace lime {
 		SDL_SetHint (SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
 		SDL_SetHint (SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
 		SDL_SetHint (SDL_HINT_TOUCH_MOUSE_EVENTS, "1");
+		SDL_SetHint (SDL_HINT_IME_SHOW_UI, "1");
 		#endif
 
 		if (flags & WINDOW_FLAG_HARDWARE) {
@@ -1104,10 +1105,11 @@ namespace lime {
 
 		if (rect) {
 
-			bounds.x = rect->x;
-			bounds.y = rect->y;
-			bounds.w = rect->width;
-			bounds.h = rect->height;
+			double scale = GetScale ();
+			bounds.x = (int)(rect->x * scale);
+			bounds.y = (int)(rect->y * scale);
+			bounds.w = (int)(rect->width * scale);
+			bounds.h = (int)(rect->height * scale);
 
 		}
 

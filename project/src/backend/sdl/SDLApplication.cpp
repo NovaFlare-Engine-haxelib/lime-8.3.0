@@ -19,9 +19,11 @@ namespace lime {
 	SDLApplication* SDLApplication::currentApplication = 0;
 
 	const int analogAxisDeadZone = 1000;
+	static std::map<int, std::map<int, int>> gamepadsAxisMap;
 	static double accumulator = 0.0;
-	std::map<int, std::map<int, int> > gamepadsAxisMap;
+	static int accumulatorOverThresholdCount = 0;
 	bool inBackground = false;
+	static bool renderTriggered = false;
 
 
 	SDLApplication::SDLApplication () {
@@ -142,15 +144,27 @@ namespace lime {
 					accumulator += realDeltaTime;
 
 					if (accumulator >= framePeriod) {
-						applicationEvent.type = UPDATE;
-						applicationEvent.deltaTime = framePeriod;
-						ApplicationEvent::Dispatch (&applicationEvent);
-						RenderEvent::Dispatch (&renderEvent);
-						accumulator -= framePeriod;
-					}
+					applicationEvent.type = UPDATE;
+					applicationEvent.deltaTime = framePeriod;
+					ApplicationEvent::Dispatch (&applicationEvent);
+					RenderEvent::Dispatch (&renderEvent);
+					renderTriggered = true;
+					accumulator -= framePeriod;
 				}
 
-				currentUpdate = SDL_GetTicks ();
+					{
+						const double threshold = 2 * framePeriod;
+						if (accumulator > threshold) {
+							accumulatorOverThresholdCount++;
+							if (accumulatorOverThresholdCount > 10) {
+								accumulator = 0.0;
+								accumulatorOverThresholdCount = 0;
+							}
+						} else if (accumulator < threshold) {
+							accumulatorOverThresholdCount = 0;
+						}
+					}
+				}
 				
 				break;
 
@@ -892,14 +906,16 @@ namespace lime {
 
 		#endif
 
-			while (SDL_PollEvent (&event)) {
+		while (SDL_PollEvent (&event)) {
 
-				HandleEvent (&event);
-				event.type = -1;
-				if (!active)
-					return active;
+			HandleEvent (&event);
+			event.type = -1;
+			if (!active)
+				return active;
 
-			}
+		}
+		
+		currentUpdate = SDL_GetTicks ();
 
 		#if defined (IPHONE) || defined (EMSCRIPTEN)
 
@@ -909,16 +925,23 @@ namespace lime {
 
 		#else
 
-			if (currentUpdate >= nextUpdate) {
+			if (renderTriggered) {
 
 				if (timerActive) SDL_RemoveTimer (timerID);
+				nextUpdate = currentUpdate + framePeriod;
+				OnTimer (0, 0);
+				renderTriggered = false;
+
+			} else if (currentUpdate >= nextUpdate) {
+
+				if (timerActive) SDL_RemoveTimer (timerID);
+				nextUpdate = currentUpdate + framePeriod / 2;
 				OnTimer (0, 0);
 
 			} else if (!timerActive) {
 
 				timerActive = true;
 				timerID = SDL_AddTimer (nextUpdate - currentUpdate, OnTimer, 0);
-
 			}
 
 		}

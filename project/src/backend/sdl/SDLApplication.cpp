@@ -284,11 +284,12 @@ namespace lime {
 				break;
 			#endif
 
-			case SDL_TEXTINPUT:
-			case SDL_TEXTEDITING:
+            case SDL_TEXTINPUT:
+            case SDL_TEXTEDITING:
+            case SDL_TEXTEDITING_EXT:
 
-				ProcessTextEvent (event);
-				break;
+                ProcessTextEvent (event);
+                break;
 
 			case SDL_WINDOWEVENT:
 
@@ -705,41 +706,60 @@ namespace lime {
 	}
 
 
-	void SDLApplication::ProcessTextEvent (SDL_Event* event) {
+void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 
-		if (TextEvent::callback) {
+    if (TextEvent::callback) {
 
-			switch (event->type) {
+        switch (event->type) {
 
-				case SDL_TEXTINPUT:
+            case SDL_TEXTINPUT:
 
-					textEvent.type = TEXT_INPUT;
-					break;
+                textEvent.type = TEXT_INPUT;
+                break;
 
-				case SDL_TEXTEDITING:
+            case SDL_TEXTEDITING:
 
-					textEvent.type = TEXT_EDIT;
-					textEvent.start = event->edit.start;
-					textEvent.length = event->edit.length;
-					break;
+                textEvent.type = TEXT_EDIT;
+                textEvent.start = event->edit.start;
+                textEvent.length = event->edit.length;
+                break;
 
-			}
+            case SDL_TEXTEDITING_EXT:
 
-			if (textEvent.text) {
+                textEvent.type = TEXT_EDIT;
+                textEvent.start = event->editExt.start;
+                textEvent.length = event->editExt.length;
+                if (textEvent.text) {
+                    free(textEvent.text);
+                }
+                {
+                    const char* extText = event->editExt.text;
+                    size_t n = strlen(extText);
+                    textEvent.text = (vbyte*)malloc(n + 1);
+                    memcpy(textEvent.text, extText, n + 1);
+                    SDL_free(event->editExt.text);
+                }
+                textEvent.windowID = event->editExt.windowID;
+                TextEvent::Dispatch(&textEvent);
+                return;
 
-				free (textEvent.text);
+        }
 
-			}
+        if (textEvent.text) {
 
-			textEvent.text = (vbyte*)malloc (strlen (event->text.text) + 1);
-			strcpy ((char*)textEvent.text, event->text.text);
+            free (textEvent.text);
 
-			textEvent.windowID = event->text.windowID;
-			TextEvent::Dispatch (&textEvent);
+        }
 
-		}
+        textEvent.text = (vbyte*)malloc (strlen (event->text.text) + 1);
+        strcpy ((char*)textEvent.text, event->text.text);
 
-	}
+        textEvent.windowID = event->text.windowID;
+        TextEvent::Dispatch (&textEvent);
+
+    }
+
+}
 
 
 	void SDLApplication::ProcessTouchEvent (SDL_Event* event) {

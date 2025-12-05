@@ -726,6 +726,64 @@ class NativeWindow
 		NativeCFFI.lime_window_warp_mouse(handle, x, y);
 		#end
 	}
+
+	public function showFallbackOverlay():Void
+	{
+		#if android
+		var show = JNI.createStaticMethod("org/libsdl/app/SDLActivity", "showLoadingOverlay", "()V");
+		show();
+		#end
+	}
+
+	public function hideFallbackOverlay():Void
+	{
+		#if android
+		var hide = JNI.createStaticMethod("org/libsdl/app/SDLActivity", "hideLoadingOverlay", "()V");
+		hide();
+		#end
+	}
+
+	public function setFallbackOverlayBitmap(pixels:Array<Int>, width:Int, height:Int):Void
+	{
+		#if android
+		var setOverlayPixels = JNI.createStaticMethod("org/libsdl/app/SDLActivity", "setOverlayPixels", "([III)V");
+		setOverlayPixels(pixels, width, height);
+		#end
+	}
+
+	public function captureFallbackSnapshot():Void
+	{
+		#if android
+		if (!useHardware || parent.context == null) {
+			return;
+		}
+		var w = parent.__width;
+		var h = parent.__height;
+		if (w <= 0 || h <= 0) {
+			return;
+		}
+		var size = w * h * 4;
+		var bytes = Bytes.alloc(size);
+		GL.readPixels(0, 0, w, h, GL.RGBA, GL.UNSIGNED_BYTE, bytes);
+		var argb:Array<Int> = [];
+		argb.resize(w * h);
+		var idx = 0;
+		for (y in 0...h) {
+			var srcY = h - 1 - y;
+			var base = srcY * w * 4;
+			for (x in 0...w) {
+				var off = base + x * 4;
+				var r = bytes.get(off);
+				var g = bytes.get(off + 1);
+				var b = bytes.get(off + 2);
+				var a = bytes.get(off + 3);
+				argb[idx++] = (a << 24) | (r << 16) | (g << 8) | b;
+			}
+		}
+		var setOverlayPixels = JNI.createStaticMethod("org/libsdl/app/SDLActivity", "setOverlayPixels", "([III)V");
+		setOverlayPixels(argb, w, h);
+		#end
+	}
 }
 
 #if (haxe_ver >= 4.0) private enum #else @:enum private #end abstract MouseCursorType(Int) from Int to Int

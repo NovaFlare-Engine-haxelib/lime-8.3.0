@@ -27,6 +27,9 @@ import android.text.Editable;
 import android.text.InputType;
 import android.text.Selection;
 import android.util.DisplayMetrics;
+import android.view.PixelCopy;
+import android.os.Looper;
+import android.widget.ImageView;
 import android.util.Log;
 import android.util.SparseArray;
 import android.view.Display;
@@ -44,6 +47,7 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
+import android.widget.ProgressBar;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.RelativeLayout;
@@ -213,6 +217,9 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     protected static DummyEdit mTextEdit;
     protected static boolean mScreenKeyboardShown;
     protected static ViewGroup mLayout;
+    protected static View mLoadingView;
+    protected static ImageView mSnapshotView;
+    protected static Bitmap mLastFrameBitmap;
     protected static SDLClipboardHandler mClipboardHandler;
     protected static Hashtable<Integer, PointerIcon> mCursors;
     protected static int mLastCursorID;
@@ -398,6 +405,20 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         mLayout = new RelativeLayout(this);
         mLayout.addView(mSurface);
 
+        LinearLayout overlay = new LinearLayout(this);
+        overlay.setGravity(Gravity.CENTER);
+        overlay.setBackgroundColor(Color.BLACK);
+        RelativeLayout.LayoutParams lp = new RelativeLayout.LayoutParams(RelativeLayout.LayoutParams.MATCH_PARENT, RelativeLayout.LayoutParams.MATCH_PARENT);
+        ImageView snapshot = new ImageView(this);
+        snapshot.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        overlay.addView(snapshot, new LinearLayout.LayoutParams(RelativeLayout.LayoutParams.MATCH_PARENT, RelativeLayout.LayoutParams.MATCH_PARENT));
+        ProgressBar pb = new ProgressBar(this);
+        overlay.addView(pb);
+        overlay.setVisibility(View.GONE);
+        mLoadingView = overlay;
+        mSnapshotView = snapshot;
+        mLayout.addView(overlay, lp);
+
         // Get our current screen orientation and pass it down.
         mCurrentOrientation = SDLActivity.getCurrentOrientation();
         // Only record current orientation
@@ -461,6 +482,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
             mHIDDeviceManager.setFrozen(true);
         }
         if (!mHasMultiWindow) {
+            captureSurfaceFrame();
             pauseNativeThread();
         }
     }
@@ -476,6 +498,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         if (!mHasMultiWindow) {
             resumeNativeThread();
         }
+        showLoadingOverlay();
     }
 
     @Override
@@ -1203,6 +1226,57 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
      */
     public static DisplayMetrics getDisplayDPI() {
         return getContext().getResources().getDisplayMetrics();
+    }
+
+    public static void showLoadingOverlay() {
+        if (mLoadingView != null) {
+            if (mSnapshotView != null && mLastFrameBitmap != null) {
+                mSnapshotView.setImageBitmap(mLastFrameBitmap);
+            }
+            mLoadingView.setVisibility(View.VISIBLE);
+        }
+    }
+
+    public static void hideLoadingOverlay() {
+        if (mLoadingView != null) {
+            mLoadingView.setVisibility(View.GONE);
+        }
+        if (mSnapshotView != null) {
+            mSnapshotView.setImageBitmap(null);
+        }
+    }
+
+    public static void onFirstFrameDrawn() {
+        if (mSingleton != null) {
+            mSingleton.runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    hideLoadingOverlay();
+                }
+            });
+        }
+    }
+
+    public static void captureSurfaceFrame() {
+        if (Build.VERSION.SDK_INT >= 24 && mSurface != null) {
+            try {
+                Bitmap bmp = Bitmap.createBitmap(mSurface.getWidth(), mSurface.getHeight(), Bitmap.Config.ARGB_8888);
+                PixelCopy.request(mSurface.getHolder().getSurface(), bmp, new PixelCopy.OnPixelCopyFinishedListener() {
+                    @Override
+                    public void onPixelCopyFinished(int result) {
+                        if (result == PixelCopy.SUCCESS) {
+                            mLastFrameBitmap = bmp;
+                        }
+                    }
+                }, new Handler(Looper.getMainLooper()));
+            } catch (Exception ignored) {}
+        }
+    }
+
+    public static void setOverlayPixels(int[] argb, int width, int height) {
+        try {
+            mLastFrameBitmap = Bitmap.createBitmap(argb, width, height, Bitmap.Config.ARGB_8888);
+        } catch (Exception ignored) {}
     }
 
     /**
@@ -2114,4 +2188,3 @@ class SDLClipboardHandler implements
         SDLActivity.onNativeClipboardChanged();
     }
 }
-

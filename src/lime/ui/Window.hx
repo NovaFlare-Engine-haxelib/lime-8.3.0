@@ -528,6 +528,34 @@ class Window
 		__backend.warpMouse(x, y);
 	}
 
+	public function showFallbackOverlay():Void
+	{
+		#if android
+		__backend.showFallbackOverlay();
+		#end
+	}
+
+	public function hideFallbackOverlay():Void
+	{
+		#if android
+		__backend.hideFallbackOverlay();
+		#end
+	}
+
+	public function setFallbackOverlayBitmap(pixels:Array<Int>, width:Int, height:Int):Void
+	{
+		#if android
+		__backend.setFallbackOverlayBitmap(pixels, width, height);
+		#end
+	}
+
+	public function captureFallbackSnapshot():Void
+	{
+		#if android
+		__backend.captureFallbackSnapshot();
+		#end
+	}
+
 	// Get & Set Methods
 	@:noCompletion private function get_cursor():MouseCursor
 	{

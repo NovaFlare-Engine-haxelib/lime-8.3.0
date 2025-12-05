@@ -420,10 +420,43 @@ class NativeApplication
 							window.__backend.render();
 							window.onRender.dispatch(window.context);
 
-							if (!window.onRender.canceled)
-							{
-								window.__backend.contextFlip();
-							}
+						if (!window.onRender.canceled)
+						{
+                        #if android
+                        if (!hasOverlaySnapshot) {
+                            var w = window.__width;
+                            var h = window.__height;
+                            if (w > 0 && h > 0) {
+                                var size = w * h * 4;
+                                var pixels = haxe.io.Bytes.alloc(size);
+                                GL.readPixels(0, 0, w, h, GL.RGBA, GL.UNSIGNED_BYTE, pixels);
+                                var argb:Array<Int> = [];
+                                argb.resize(w * h);
+                                var idx = 0;
+                                for (y in 0...h) {
+                                    var srcY = h - 1 - y;
+                                    var base = srcY * w * 4;
+                                    for (x in 0...w) {
+                                        var off = base + x * 4;
+                                        var r = pixels.get(off);
+                                        var g = pixels.get(off + 1);
+                                        var b = pixels.get(off + 2);
+                                        var a = pixels.get(off + 3);
+                                        argb[idx++] = (a << 24) | (r << 16) | (g << 8) | b;
+                                    }
+                                }
+                                var setOverlayPixels = JNI.createStaticMethod("org/libsdl/app/SDLActivity", "setOverlayPixels", "([III)V");
+                                setOverlayPixels(argb, w, h);
+                                hasOverlaySnapshot = true;
+                            }
+                        }
+                        #end
+						window.__backend.contextFlip();
+						#if android
+						var onFirstFrameDrawn = JNI.createStaticMethod("org/libsdl/app/SDLActivity", "onFirstFrameDrawn", "()V");
+						onFirstFrameDrawn();
+						#end
+						}
 						}
 					}
 
@@ -464,8 +497,14 @@ class NativeApplication
 	private var framePeriod:Float = 0; //帧周期，单位毫秒
 	private var accumulator:Float = 0; //累加器，单位毫秒
 	private var realDeltaTime:Float = 0; //实际时间间隔，单位毫秒
+	private var forceDrawOnce:Bool = false;
+	private var hasOverlaySnapshot:Bool = false;
 	private function drawCheck(window:Window):Bool
 	{
+		if (forceDrawOnce) {
+			forceDrawOnce = false;
+			return true;
+		}
 		if (window.frameRate <= window.drawFrameRate || !window.splitUpdate) {
 			return true;
 		}
@@ -592,6 +631,7 @@ class NativeApplication
 			switch (windowEventInfo.type)
 			{
 				case WINDOW_ACTIVATE:
+					forceDrawOnce = true;
 					advanceTimer();
 					window.onActivate.dispatch();
 					AudioManager.resume();
@@ -601,6 +641,36 @@ class NativeApplication
 
 				case WINDOW_DEACTIVATE:
 					window.onDeactivate.dispatch();
+                    #if android
+                    // Capture last frame into bitmap for overlay
+                    if (window.__backend.useHardware && window.context != null) {
+                        var w = window.__width;
+                        var h = window.__height;
+                        if (w > 0 && h > 0) {
+                            var size = w * h * 4;
+                            var pixels = haxe.io.Bytes.alloc(size);
+                            GL.readPixels(0, 0, w, h, GL.RGBA, GL.UNSIGNED_BYTE, pixels);
+                            var argb:Array<Int> = [];
+                            argb.resize(w * h);
+                            var idx = 0;
+                            for (y in 0...h) {
+                                var srcY = h - 1 - y;
+                                var base = srcY * w * 4;
+                                for (x in 0...w) {
+                                    var off = base + x * 4;
+                                    var r = pixels.get(off);
+                                    var g = pixels.get(off + 1);
+                                    var b = pixels.get(off + 2);
+                                    var a = pixels.get(off + 3);
+                                    argb[idx++] = (a << 24) | (r << 16) | (g << 8) | b;
+                                }
+                            }
+                            var setOverlayPixels = JNI.createStaticMethod("org/libsdl/app/SDLActivity", "setOverlayPixels", "([III)V");
+                            setOverlayPixels(argb, w, h);
+                            hasOverlaySnapshot = true;
+                        }
+                    }
+                    #end
 					AudioManager.suspend();
 					pauseTimer = System.getTimer();
 
@@ -608,6 +678,7 @@ class NativeApplication
 					window.onEnter.dispatch();
 
 				case WINDOW_EXPOSE:
+					forceDrawOnce = true;
 					window.onExpose.dispatch();
 
 				case WINDOW_FOCUS_IN:
@@ -701,6 +772,7 @@ class NativeApplication
 		#end
 		#end
 	}
+
 }
 
 @:keep /*private*/ class ApplicationEventInfo

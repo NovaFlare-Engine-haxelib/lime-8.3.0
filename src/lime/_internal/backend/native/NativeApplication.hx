@@ -420,43 +420,14 @@ class NativeApplication
 							window.__backend.render();
 							window.onRender.dispatch(window.context);
 
-						if (!window.onRender.canceled)
-						{
-                        #if android
-                        if (!hasOverlaySnapshot) {
-                            var w = window.__width;
-                            var h = window.__height;
-                            if (w > 0 && h > 0) {
-                                var size = w * h * 4;
-                                var pixels = haxe.io.Bytes.alloc(size);
-                                GL.readPixels(0, 0, w, h, GL.RGBA, GL.UNSIGNED_BYTE, pixels);
-                                var argb:Array<Int> = [];
-                                argb.resize(w * h);
-                                var idx = 0;
-                                for (y in 0...h) {
-                                    var srcY = h - 1 - y;
-                                    var base = srcY * w * 4;
-                                    for (x in 0...w) {
-                                        var off = base + x * 4;
-                                        var r = pixels.get(off);
-                                        var g = pixels.get(off + 1);
-                                        var b = pixels.get(off + 2);
-                                        var a = pixels.get(off + 3);
-                                        argb[idx++] = (a << 24) | (r << 16) | (g << 8) | b;
-                                    }
-                                }
-                                var setOverlayPixels = JNI.createStaticMethod("org/libsdl/app/SDLActivity", "setOverlayPixels", "([III)V");
-                                setOverlayPixels(argb, w, h);
-                                hasOverlaySnapshot = true;
-                            }
-                        }
-                        #end
-						window.__backend.contextFlip();
-						#if android
-						var onFirstFrameDrawn = JNI.createStaticMethod("org/libsdl/app/SDLActivity", "onFirstFrameDrawn", "()V");
-						onFirstFrameDrawn();
-						#end
-						}
+							if (!window.onRender.canceled)
+							{
+								window.__backend.contextFlip();
+								#if android
+								var onFirstFrameDrawn = JNI.createStaticMethod("org/libsdl/app/SDLActivity", "onFirstFrameDrawn", "()V");
+								onFirstFrameDrawn();
+								#end
+							}
 						}
 					}
 

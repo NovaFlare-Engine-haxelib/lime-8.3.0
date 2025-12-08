@@ -1125,6 +1125,11 @@ class HTML5Window
 		return value;
 	}
 
+	public function setNewFrameGeneration(value:Bool):Bool
+	{
+		return value;
+	}
+
 	public function setFullscreen(value:Bool):Bool
 	{
 		if (value)

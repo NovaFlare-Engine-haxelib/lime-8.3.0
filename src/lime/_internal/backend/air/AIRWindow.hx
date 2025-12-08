@@ -287,6 +287,18 @@ class AIRWindow extends FlashWindow
 		}
 	}
 
+	public override function setFrameRate(value:Float):Float
+	{
+		super.setFrameRate(value);
+		if (nativeWindow != null) nativeWindow.stage.frameRate = value;
+		return value;
+	}
+
+	public override function setNewFrameGeneration(value:Bool):Bool
+	{
+		return value;
+	}
+
 	public override function setMaximized(value:Bool):Bool
 	{
 		if (nativeWindow != null)

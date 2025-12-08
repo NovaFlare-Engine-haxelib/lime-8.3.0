@@ -42,7 +42,8 @@ namespace lime {
 		SDL_LogSetPriority (SDL_LOG_CATEGORY_APPLICATION, SDL_LOG_PRIORITY_WARN);
 
 		currentApplication = this;
-
+		
+		newFrameGeneration = false;
 		framePeriod = 1000.0 / 60.0;
 
 		currentUpdate = 0;
@@ -132,37 +133,55 @@ namespace lime {
 			case SDL_USEREVENT:
 
 				if (!inBackground) {
-					currentUpdate = SDL_GetTicks ();
-					double realDeltaTime = currentUpdate - lastUpdate;
-					lastUpdate = currentUpdate;
+					if (newFrameGeneration) {
+						currentUpdate = SDL_GetTicks ();
+						double realDeltaTime = currentUpdate - lastUpdate;
+						lastUpdate = currentUpdate;
 
-					const double MAX_DELTA_TIME = 5 * framePeriod;
-					if (realDeltaTime > MAX_DELTA_TIME) {
-						realDeltaTime = MAX_DELTA_TIME;
-					}
+						const double MAX_DELTA_TIME = 5 * framePeriod;
+						if (realDeltaTime > MAX_DELTA_TIME) {
+							realDeltaTime = MAX_DELTA_TIME;
+						}
 
-					accumulator += realDeltaTime;
+						accumulator += realDeltaTime;
 
-					if (accumulator >= framePeriod) {
-					applicationEvent.type = UPDATE;
-					applicationEvent.deltaTime = framePeriod;
-					ApplicationEvent::Dispatch (&applicationEvent);
-					RenderEvent::Dispatch (&renderEvent);
-					renderTriggered = true;
-					accumulator -= framePeriod;
-				}
+						if (accumulator >= framePeriod) {
+							applicationEvent.type = UPDATE;
+							applicationEvent.deltaTime = framePeriod;
+							ApplicationEvent::Dispatch (&applicationEvent);
+							RenderEvent::Dispatch (&renderEvent);
+							renderTriggered = true;
+							accumulator -= framePeriod;
+						}
 
-					{
-						const double threshold = 2 * framePeriod;
-						if (accumulator > threshold) {
-							accumulatorOverThresholdCount++;
-							if (accumulatorOverThresholdCount > 10) {
-								accumulator = 0.0;
+						{
+							const double threshold = 2 * framePeriod;
+							if (accumulator > threshold) {
+								accumulatorOverThresholdCount++;
+								if (accumulatorOverThresholdCount > 10) {
+									accumulator = 0.0;
+									accumulatorOverThresholdCount = 0;
+								}
+							} else if (accumulator < threshold) {
 								accumulatorOverThresholdCount = 0;
 							}
-						} else if (accumulator < threshold) {
-							accumulatorOverThresholdCount = 0;
 						}
+					} else {
+						currentUpdate = SDL_GetTicks ();
+						applicationEvent.type = UPDATE;
+						applicationEvent.deltaTime = currentUpdate - lastUpdate;
+						lastUpdate = currentUpdate;
+
+						nextUpdate += framePeriod;
+
+						while (nextUpdate <= currentUpdate) {
+
+							nextUpdate += framePeriod;
+
+						}
+
+						ApplicationEvent::Dispatch (&applicationEvent);
+						RenderEvent::Dispatch (&renderEvent);
 					}
 				}
 				
@@ -883,6 +902,13 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 	}
 
 
+	void SDLApplication::SetNewFrameGeneration (bool enabled) {
+
+		newFrameGeneration = enabled;
+
+	}
+
+
 	static SDL_TimerID timerID = 0;
 	bool timerActive = false;
 	bool firstTime = true;
@@ -940,30 +966,47 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 		#if defined (IPHONE) || defined (EMSCRIPTEN)
 
 			if (currentUpdate >= nextUpdate) {
-				nextUpdate = currentUpdate + framePeriod;
+
+				event.type = SDL_USEREVENT;
+				HandleEvent (&event);
+				event.type = -1;
+
 			}
 
 		#else
 
-			if (renderTriggered) {
+			if (newFrameGeneration) {
+				if (renderTriggered) {
 
-				if (timerActive) SDL_RemoveTimer (timerID);
-				nextUpdate = currentUpdate + framePeriod;
-				OnTimer (0, 0);
-				renderTriggered = false;
+					if (timerActive) SDL_RemoveTimer (timerID);
+					nextUpdate = currentUpdate + framePeriod;
+					OnTimer (0, 0);
+					renderTriggered = false;
 
-			} else if (currentUpdate >= nextUpdate) {
+				} else if (currentUpdate >= nextUpdate) {
 
-				if (timerActive) SDL_RemoveTimer (timerID);
-				nextUpdate = currentUpdate + framePeriod / 2;
-				OnTimer (0, 0);
+					if (timerActive) SDL_RemoveTimer (timerID);
+					nextUpdate = currentUpdate + framePeriod/2;
+					OnTimer (0, 0);
 
-			} else if (!timerActive) {
+				} else if (!timerActive) {
 
-				timerActive = true;
-				timerID = SDL_AddTimer (nextUpdate - currentUpdate, OnTimer, 0);
+					timerActive = true;
+					timerID = SDL_AddTimer (nextUpdate - currentUpdate, OnTimer, 0);
+				}
+			} else {
+				if (currentUpdate >= nextUpdate) {
+
+					if (timerActive) SDL_RemoveTimer (timerID);
+					OnTimer (0, 0);
+
+				} else if (!timerActive) {
+
+					timerActive = true;
+					timerID = SDL_AddTimer (nextUpdate - currentUpdate, OnTimer, 0);
+
+				}
 			}
-
 		}
 
 		#endif

@@ -404,6 +404,23 @@ class System
 		#end
 	}
 
+	/**
+		Returns the number of milliseconds since the application was initialized (high precision).
+		Note: On CPP this uses the high-resolution timestamp. On other platforms it falls back to getTimer().
+	**/
+	public static function getTimerNano():Float
+	{
+		#if cpp
+		return untyped __global__.__time_stamp() * 1000.0;
+		#elseif (lime_cffi && !macro)
+		return NativeCFFI.lime_system_get_timer();
+		#elseif (js && html5)
+		return Browser.window.performance.now();
+		#else
+		return cast getTimer();
+		#end
+	}
+
 	#if (!lime_doc_gen || lime_cffi)
 	public static inline function load(library:String, method:String, args:Int = 0, lazy:Bool = false):Dynamic
 	{

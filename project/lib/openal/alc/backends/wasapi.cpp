@@ -658,6 +658,7 @@ struct WasapiPlayback final : public BackendBase, WasapiProxy {
 
     UINT32 mFrameStep{0u};
     std::atomic<UINT32> mPadding{0u};
+    std::wstring mCurDevId;
 
     std::atomic<bool> mKillNow{true};
     std::thread mThread;
@@ -692,10 +693,92 @@ FORCE_ALIGN int WasapiPlayback::mixerProc()
     const UINT32 buffer_len{mDevice->BufferSize};
     while(!mKillNow.load(std::memory_order_relaxed))
     {
+        if(mDevId.empty())
+        {
+            void *eptr;
+            HRESULT ehr = CoCreateInstance(CLSID_MMDeviceEnumerator, nullptr, CLSCTX_INPROC_SERVER, IID_IMMDeviceEnumerator, &eptr);
+            if(SUCCEEDED(ehr))
+            {
+                auto Enumerator = static_cast<IMMDeviceEnumerator*>(eptr);
+                IMMDevice *defdev{nullptr};
+                HRESULT dhr = Enumerator->GetDefaultAudioEndpoint(eRender, eMultimedia, &defdev);
+                if(SUCCEEDED(dhr) && defdev)
+                {
+                    WCHAR *id = get_device_id(defdev);
+                    if(id)
+                    {
+                        bool changed = mCurDevId.empty() || wcscmp(id, mCurDevId.c_str()) != 0;
+                        if(changed)
+                        {
+                            mClient->Stop();
+                            mClient->Reset();
+                            if(mRender)
+                            {
+                                mRender->Release();
+                                mRender = nullptr;
+                            }
+                            if(mMMDev) mMMDev->Release();
+                            mMMDev = defdev;
+                            mCurDevId = id;
+                            CoTaskMemFree(id);
+                            HRESULT r = resetProxy();
+                            if(SUCCEEDED(r))
+                            {
+                                ResetEvent(mNotifyEvent);
+                                r = mClient->Start();
+                                if(SUCCEEDED(r))
+                                {
+                                    void *srv;
+                                    r = mClient->GetService(IID_IAudioRenderClient, &srv);
+                                    if(SUCCEEDED(r))
+                                    {
+                                        mRender = static_cast<IAudioRenderClient*>(srv);
+                                        Enumerator->Release();
+                                        continue;
+                                    }
+                                }
+                            }
+                            Enumerator->Release();
+                            continue;
+                        }
+                        CoTaskMemFree(id);
+                    }
+                    defdev->Release();
+                }
+                Enumerator->Release();
+            }
+        }
         UINT32 written;
         hr = mClient->GetCurrentPadding(&written);
         if(FAILED(hr))
         {
+            if(hr == AUDCLNT_E_DEVICE_INVALIDATED)
+            {
+                mClient->Stop();
+                mClient->Reset();
+                if(mRender)
+                {
+                    mRender->Release();
+                    mRender = nullptr;
+                }
+                HRESULT r = resetProxy();
+                if(SUCCEEDED(r))
+                {
+                    ResetEvent(mNotifyEvent);
+                    r = mClient->Start();
+                    if(SUCCEEDED(r))
+                    {
+                        void *srv;
+                        r = mClient->GetService(IID_IAudioRenderClient, &srv);
+                        if(SUCCEEDED(r))
+                        {
+                            mRender = static_cast<IAudioRenderClient*>(srv);
+                            continue;
+                        }
+                    }
+                }
+                continue;
+            }
             ERR("Failed to get padding: 0x%08lx\n", hr);
             aluHandleDisconnect(mDevice, "Failed to retrieve buffer padding: 0x%08lx", hr);
             break;
@@ -723,6 +806,33 @@ FORCE_ALIGN int WasapiPlayback::mixerProc()
         }
         if(FAILED(hr))
         {
+            if(hr == AUDCLNT_E_DEVICE_INVALIDATED)
+            {
+                mClient->Stop();
+                mClient->Reset();
+                if(mRender)
+                {
+                    mRender->Release();
+                    mRender = nullptr;
+                }
+                HRESULT r = resetProxy();
+                if(SUCCEEDED(r))
+                {
+                    ResetEvent(mNotifyEvent);
+                    r = mClient->Start();
+                    if(SUCCEEDED(r))
+                    {
+                        void *srv;
+                        r = mClient->GetService(IID_IAudioRenderClient, &srv);
+                        if(SUCCEEDED(r))
+                        {
+                            mRender = static_cast<IAudioRenderClient*>(srv);
+                            continue;
+                        }
+                    }
+                }
+                continue;
+            }
             ERR("Failed to buffer data: 0x%08lx\n", hr);
             aluHandleDisconnect(mDevice, "Failed to send playback samples: 0x%08lx", hr);
             break;
@@ -812,6 +922,14 @@ HRESULT WasapiPlayback::openProxy()
         mClient = static_cast<IAudioClient*>(ptr);
         if(mDevice->DeviceName.empty())
             mDevice->DeviceName = get_device_name_and_guid(mMMDev).first;
+        {
+            WCHAR *id = get_device_id(mMMDev);
+            if(id)
+            {
+                mCurDevId = id;
+                CoTaskMemFree(id);
+            }
+        }
     }
 
     if(FAILED(hr))
@@ -851,13 +969,43 @@ HRESULT WasapiPlayback::resetProxy()
     mClient = nullptr;
 
     void *ptr;
-    HRESULT hr = mMMDev->Activate(IID_IAudioClient, CLSCTX_INPROC_SERVER, nullptr, &ptr);
+    HRESULT hr = mMMDev ? mMMDev->Activate(IID_IAudioClient, CLSCTX_INPROC_SERVER, nullptr, &ptr) : E_FAIL;
     if(FAILED(hr))
     {
-        ERR("Failed to reactivate audio client: 0x%08lx\n", hr);
-        return hr;
+        void *eptr;
+        HRESULT ehr = CoCreateInstance(CLSID_MMDeviceEnumerator, nullptr, CLSCTX_INPROC_SERVER, IID_IMMDeviceEnumerator, &eptr);
+        if(SUCCEEDED(ehr))
+        {
+            auto Enumerator = static_cast<IMMDeviceEnumerator*>(eptr);
+            if(mMMDev) { mMMDev->Release(); mMMDev = nullptr; }
+            HRESULT dhr;
+            if(mDevId.empty())
+                dhr = Enumerator->GetDefaultAudioEndpoint(eRender, eMultimedia, &mMMDev);
+            else
+            {
+                dhr = Enumerator->GetDevice(mDevId.c_str(), &mMMDev);
+                if(FAILED(dhr))
+                    dhr = Enumerator->GetDefaultAudioEndpoint(eRender, eMultimedia, &mMMDev);
+            }
+            Enumerator->Release();
+            if(SUCCEEDED(dhr))
+                hr = mMMDev->Activate(IID_IAudioClient, CLSCTX_INPROC_SERVER, nullptr, &ptr);
+        }
+        if(FAILED(hr))
+        {
+            ERR("Failed to reactivate audio client: 0x%08lx\n", hr);
+            return hr;
+        }
     }
     mClient = static_cast<IAudioClient*>(ptr);
+    {
+        WCHAR *id = get_device_id(mMMDev);
+        if(id)
+        {
+            mCurDevId = id;
+            CoTaskMemFree(id);
+        }
+    }
 
     WAVEFORMATEX *wfx;
     hr = mClient->GetMixFormat(&wfx);
@@ -1202,6 +1350,7 @@ struct WasapiCapture final : public BackendBase, WasapiProxy {
     ChannelConverter mChannelConv{};
     SampleConverterPtr mSampleConv;
     RingBufferPtr mRing;
+    std::wstring mCurDevId;
 
     std::atomic<bool> mKillNow{true};
     std::thread mThread;
@@ -1234,10 +1383,94 @@ FORCE_ALIGN int WasapiCapture::recordProc()
     al::vector<float> samples;
     while(!mKillNow.load(std::memory_order_relaxed))
     {
+        if(mDevId.empty())
+        {
+            void *eptr;
+            HRESULT ehr = CoCreateInstance(CLSID_MMDeviceEnumerator, nullptr, CLSCTX_INPROC_SERVER, IID_IMMDeviceEnumerator, &eptr);
+            if(SUCCEEDED(ehr))
+            {
+                auto Enumerator = static_cast<IMMDeviceEnumerator*>(eptr);
+                IMMDevice *defdev{nullptr};
+                HRESULT dhr = Enumerator->GetDefaultAudioEndpoint(eCapture, eMultimedia, &defdev);
+                if(SUCCEEDED(dhr) && defdev)
+                {
+                    WCHAR *id = get_device_id(defdev);
+                    if(id)
+                    {
+                        bool changed = mCurDevId.empty() || wcscmp(id, mCurDevId.c_str()) != 0;
+                        if(changed)
+                        {
+                            mClient->Stop();
+                            mClient->Reset();
+                            if(mCapture)
+                            {
+                                mCapture->Release();
+                                mCapture = nullptr;
+                            }
+                            if(mMMDev) mMMDev->Release();
+                            mMMDev = defdev;
+                            mCurDevId = id;
+                            CoTaskMemFree(id);
+                            HRESULT r = resetProxy();
+                            if(SUCCEEDED(r))
+                            {
+                                ResetEvent(mNotifyEvent);
+                                r = mClient->Start();
+                                if(SUCCEEDED(r))
+                                {
+                                    void *srv;
+                                    r = mClient->GetService(IID_IAudioCaptureClient, &srv);
+                                    if(SUCCEEDED(r))
+                                    {
+                                        mCapture = static_cast<IAudioCaptureClient*>(srv);
+                                        Enumerator->Release();
+                                        continue;
+                                    }
+                                }
+                            }
+                            Enumerator->Release();
+                            continue;
+                        }
+                        CoTaskMemFree(id);
+                    }
+                    defdev->Release();
+                }
+                Enumerator->Release();
+            }
+        }
         UINT32 avail;
         hr = mCapture->GetNextPacketSize(&avail);
         if(FAILED(hr))
+        {
+            if(hr == AUDCLNT_E_DEVICE_INVALIDATED)
+            {
+                mClient->Stop();
+                mClient->Reset();
+                if(mCapture)
+                {
+                    mCapture->Release();
+                    mCapture = nullptr;
+                }
+                HRESULT r = resetProxy();
+                if(SUCCEEDED(r))
+                {
+                    ResetEvent(mNotifyEvent);
+                    r = mClient->Start();
+                    if(SUCCEEDED(r))
+                    {
+                        void *srv;
+                        r = mClient->GetService(IID_IAudioCaptureClient, &srv);
+                        if(SUCCEEDED(r))
+                        {
+                            mCapture = static_cast<IAudioCaptureClient*>(srv);
+                            continue;
+                        }
+                    }
+                }
+                continue;
+            }
             ERR("Failed to get next packet size: 0x%08lx\n", hr);
+        }
         else if(avail > 0)
         {
             UINT32 numsamples;
@@ -1246,7 +1479,36 @@ FORCE_ALIGN int WasapiCapture::recordProc()
 
             hr = mCapture->GetBuffer(&rdata, &numsamples, &flags, nullptr, nullptr);
             if(FAILED(hr))
+            {
+                if(hr == AUDCLNT_E_DEVICE_INVALIDATED)
+                {
+                    mClient->Stop();
+                    mClient->Reset();
+                    if(mCapture)
+                    {
+                        mCapture->Release();
+                        mCapture = nullptr;
+                    }
+                    HRESULT r = resetProxy();
+                    if(SUCCEEDED(r))
+                    {
+                        ResetEvent(mNotifyEvent);
+                        r = mClient->Start();
+                        if(SUCCEEDED(r))
+                        {
+                            void *srv;
+                            r = mClient->GetService(IID_IAudioCaptureClient, &srv);
+                            if(SUCCEEDED(r))
+                            {
+                                mCapture = static_cast<IAudioCaptureClient*>(srv);
+                                continue;
+                            }
+                        }
+                    }
+                    continue;
+                }
                 ERR("Failed to get capture buffer: 0x%08lx\n", hr);
+            }
             else
             {
                 if(mChannelConv.is_active())
@@ -1297,6 +1559,33 @@ FORCE_ALIGN int WasapiCapture::recordProc()
 
         if(FAILED(hr))
         {
+            if(hr == AUDCLNT_E_DEVICE_INVALIDATED)
+            {
+                mClient->Stop();
+                mClient->Reset();
+                if(mCapture)
+                {
+                    mCapture->Release();
+                    mCapture = nullptr;
+                }
+                HRESULT r = resetProxy();
+                if(SUCCEEDED(r))
+                {
+                    ResetEvent(mNotifyEvent);
+                    r = mClient->Start();
+                    if(SUCCEEDED(r))
+                    {
+                        void *srv;
+                        r = mClient->GetService(IID_IAudioCaptureClient, &srv);
+                        if(SUCCEEDED(r))
+                        {
+                            mCapture = static_cast<IAudioCaptureClient*>(srv);
+                            continue;
+                        }
+                    }
+                }
+                continue;
+            }
             aluHandleDisconnect(mDevice, "Failed to capture samples: 0x%08lx", hr);
             break;
         }
@@ -1397,6 +1686,14 @@ HRESULT WasapiCapture::openProxy()
         mClient = static_cast<IAudioClient*>(ptr);
         if(mDevice->DeviceName.empty())
             mDevice->DeviceName = get_device_name_and_guid(mMMDev).first;
+        {
+            WCHAR *id = get_device_id(mMMDev);
+            if(id)
+            {
+                mCurDevId = id;
+                CoTaskMemFree(id);
+            }
+        }
     }
 
     if(FAILED(hr))
@@ -1427,13 +1724,43 @@ HRESULT WasapiCapture::resetProxy()
     mClient = nullptr;
 
     void *ptr;
-    HRESULT hr{mMMDev->Activate(IID_IAudioClient, CLSCTX_INPROC_SERVER, nullptr, &ptr)};
+    HRESULT hr = mMMDev ? mMMDev->Activate(IID_IAudioClient, CLSCTX_INPROC_SERVER, nullptr, &ptr) : E_FAIL;
     if(FAILED(hr))
     {
-        ERR("Failed to reactivate audio client: 0x%08lx\n", hr);
-        return hr;
+        void *eptr;
+        HRESULT ehr = CoCreateInstance(CLSID_MMDeviceEnumerator, nullptr, CLSCTX_INPROC_SERVER, IID_IMMDeviceEnumerator, &eptr);
+        if(SUCCEEDED(ehr))
+        {
+            auto Enumerator = static_cast<IMMDeviceEnumerator*>(eptr);
+            if(mMMDev) { mMMDev->Release(); mMMDev = nullptr; }
+            HRESULT dhr;
+            if(mDevId.empty())
+                dhr = Enumerator->GetDefaultAudioEndpoint(eCapture, eMultimedia, &mMMDev);
+            else
+            {
+                dhr = Enumerator->GetDevice(mDevId.c_str(), &mMMDev);
+                if(FAILED(dhr))
+                    dhr = Enumerator->GetDefaultAudioEndpoint(eCapture, eMultimedia, &mMMDev);
+            }
+            Enumerator->Release();
+            if(SUCCEEDED(dhr))
+                hr = mMMDev->Activate(IID_IAudioClient, CLSCTX_INPROC_SERVER, nullptr, &ptr);
+        }
+        if(FAILED(hr))
+        {
+            ERR("Failed to reactivate audio client: 0x%08lx\n", hr);
+            return hr;
+        }
     }
     mClient = static_cast<IAudioClient*>(ptr);
+    {
+        WCHAR *id = get_device_id(mMMDev);
+        if(id)
+        {
+            mCurDevId = id;
+            CoTaskMemFree(id);
+        }
+    }
 
     // Make sure buffer is at least 100ms in size
     ReferenceTime buf_time{ReferenceTime{seconds{mDevice->BufferSize}} / mDevice->Frequency};

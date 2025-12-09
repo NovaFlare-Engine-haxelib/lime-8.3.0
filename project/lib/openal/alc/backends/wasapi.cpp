@@ -649,6 +649,8 @@ struct WasapiPlayback final : public BackendBase, WasapiProxy {
 
     ClockLatency getClockLatency() override;
 
+    bool tryRestart();
+
     std::wstring mDevId;
 
     IMMDevice *mMMDev{nullptr};
@@ -695,15 +697,19 @@ FORCE_ALIGN int WasapiPlayback::mixerProc()
     const UINT32 buffer_len{mDevice->BufferSize};
     while(!mKillNow.load(std::memory_order_relaxed))
     {
-        if(mDevId.empty() && !mSwitching.exchange(true))
+        static auto lastCheck = std::chrono::steady_clock::now();
+        if(mDevId.empty() && !mSwitching.load(std::memory_order_relaxed)
+            && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-lastCheck).count() > 1500)
         {
+            lastCheck = std::chrono::steady_clock::now();
             void *eptr;
             HRESULT ehr = CoCreateInstance(CLSID_MMDeviceEnumerator, nullptr, CLSCTX_INPROC_SERVER, IID_IMMDeviceEnumerator, &eptr);
             if(SUCCEEDED(ehr))
             {
                 auto Enumerator = static_cast<IMMDeviceEnumerator*>(eptr);
                 IMMDevice *defdev{nullptr};
-                HRESULT dhr = Enumerator->GetDefaultAudioEndpoint(eRender, eMultimedia, &defdev);
+                HRESULT dhr = Enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &defdev);
+                if(FAILED(dhr)) dhr = Enumerator->GetDefaultAudioEndpoint(eRender, eMultimedia, &defdev);
                 if(SUCCEEDED(dhr) && defdev)
                 {
                     WCHAR *id = get_device_id(defdev);
@@ -712,56 +718,8 @@ FORCE_ALIGN int WasapiPlayback::mixerProc()
                         bool changed = mCurDevId.empty() || wcscmp(id, mCurDevId.c_str()) != 0;
                         if(changed)
                         {
-                            std::unique_lock<WasapiPlayback> dlock{*this};
-                            if(mClient) mClient->Stop();
-                            if(mClient) mClient->Reset();
-                            if(mRender)
-                            {
-                                mRender->Release();
-                                mRender = nullptr;
-                            }
-                            if(mMMDev) mMMDev->Release();
-                            mMMDev = defdev;
-                            mCurDevId = id;
-                            CoTaskMemFree(id);
-                            HRESULT r = resetProxy();
-                            if(SUCCEEDED(r))
-                            {
-                                ResetEvent(mNotifyEvent);
-                                r = mClient ? mClient->Start() : E_FAIL;
-                                if(SUCCEEDED(r))
-                                {
-                                    
-                                    void *srv;
-                                    r = mClient ? mClient->GetService(IID_IAudioRenderClient, &srv) : E_FAIL;
-                                    if(SUCCEEDED(r))
-                                    {
-                                        mRender = static_cast<IAudioRenderClient*>(srv);
-                                        UINT32 pad=0; UINT32 blen=mDevice->BufferSize; ALuint usize=mDevice->UpdateSize;
-                                        if(SUCCEEDED(mClient->GetCurrentPadding(&pad)))
-                                        {
-                                            UINT32 plen = (blen>pad) ? (blen-pad) : 0;
-                                            plen = (plen>usize) ? usize : plen;
-                                            if(plen > 0)
-                                            {
-                                                BYTE *pbuf=nullptr; HRESULT pr = mRender->GetBuffer(plen, &pbuf);
-                                                if(SUCCEEDED(pr))
-                                                    mRender->ReleaseBuffer(plen, AUDCLNT_BUFFERFLAGS_SILENT);
-                                            }
-                                        }
-                                        mSwitching.store(false, std::memory_order_release);
-                                        dlock.unlock();
-                                        Enumerator->Release();
-                                        mFailCount.store(0, std::memory_order_relaxed);
-                                        continue;
-                                    }
-                                }
-                            }
-                            mSwitching.store(false, std::memory_order_release);
-                            dlock.unlock();
-                            Sleep(50);
-                            Enumerator->Release();
-                            continue;
+                            if(tryRestart())
+                                mCurDevId = id;
                         }
                         CoTaskMemFree(id);
                     }
@@ -769,55 +727,19 @@ FORCE_ALIGN int WasapiPlayback::mixerProc()
                 }
                 Enumerator->Release();
             }
-            mSwitching.store(false, std::memory_order_release);
         }
+        
         UINT32 written;
         hr = mClient->GetCurrentPadding(&written);
         if(FAILED(hr))
         {
-            if(hr == AUDCLNT_E_DEVICE_INVALIDATED && !mSwitching.exchange(true))
+            if(hr == AUDCLNT_E_DEVICE_INVALIDATED)
             {
-                std::unique_lock<WasapiPlayback> dlock{*this};
-                if(mClient) mClient->Stop();
-                if(mClient) mClient->Reset();
-                if(mRender)
+                if(tryRestart())
                 {
-                    mRender->Release();
-                    mRender = nullptr;
+                    mFailCount.store(0, std::memory_order_relaxed);
+                    continue;
                 }
-                HRESULT r = resetProxy();
-                if(SUCCEEDED(r))
-                {
-                    ResetEvent(mNotifyEvent);
-                    r = mClient ? mClient->Start() : E_FAIL;
-                    if(SUCCEEDED(r))
-                    {
-                        void *srv;
-                        r = mClient ? mClient->GetService(IID_IAudioRenderClient, &srv) : E_FAIL;
-                        if(SUCCEEDED(r))
-                        {
-                            mRender = static_cast<IAudioRenderClient*>(srv);
-                            UINT32 pad=0; UINT32 blen=mDevice->BufferSize; ALuint usize=mDevice->UpdateSize;
-                            if(SUCCEEDED(mClient->GetCurrentPadding(&pad)))
-                            {
-                                UINT32 plen = (blen>pad) ? (blen-pad) : 0;
-                                plen = (plen>usize) ? usize : plen;
-                                if(plen > 0)
-                                {
-                                    BYTE *pbuf=nullptr; HRESULT pr = mRender->GetBuffer(plen, &pbuf);
-                                    if(SUCCEEDED(pr))
-                                        mRender->ReleaseBuffer(plen, AUDCLNT_BUFFERFLAGS_SILENT);
-                                }
-                            }
-                            mSwitching.store(false, std::memory_order_release);
-                            dlock.unlock();
-                            mFailCount.store(0, std::memory_order_relaxed);
-                            continue;
-                        }
-                    }
-                }
-                mSwitching.store(false, std::memory_order_release);
-                dlock.unlock();
                 Sleep(50);
                 continue;
             }
@@ -856,49 +778,13 @@ FORCE_ALIGN int WasapiPlayback::mixerProc()
         }
         if(FAILED(hr))
         {
-            if(hr == AUDCLNT_E_DEVICE_INVALIDATED && !mSwitching.exchange(true))
+            if(hr == AUDCLNT_E_DEVICE_INVALIDATED)
             {
-                std::unique_lock<WasapiPlayback> dlock{*this};
-                if(mClient) mClient->Stop();
-                if(mClient) mClient->Reset();
-                if(mRender)
+                if(tryRestart())
                 {
-                    mRender->Release();
-                    mRender = nullptr;
+                    mFailCount.store(0, std::memory_order_relaxed);
+                    continue;
                 }
-                HRESULT r = resetProxy();
-                if(SUCCEEDED(r))
-                {
-                    ResetEvent(mNotifyEvent);
-                    r = mClient ? mClient->Start() : E_FAIL;
-                    if(SUCCEEDED(r))
-                    {
-                        void *srv;
-                        r = mClient ? mClient->GetService(IID_IAudioRenderClient, &srv) : E_FAIL;
-                        if(SUCCEEDED(r))
-                        {
-                            mRender = static_cast<IAudioRenderClient*>(srv);
-                            UINT32 pad=0; UINT32 blen=mDevice->BufferSize; ALuint usize=mDevice->UpdateSize;
-                            if(SUCCEEDED(mClient->GetCurrentPadding(&pad)))
-                            {
-                                UINT32 plen = (blen>pad) ? (blen-pad) : 0;
-                                plen = (plen>usize) ? usize : plen;
-                                if(plen > 0)
-                                {
-                                    BYTE *pbuf=nullptr; HRESULT pr = mRender->GetBuffer(plen, &pbuf);
-                                    if(SUCCEEDED(pr))
-                                        mRender->ReleaseBuffer(plen, AUDCLNT_BUFFERFLAGS_SILENT);
-                                }
-                            }
-                            mSwitching.store(false, std::memory_order_release);
-                            dlock.unlock();
-                            mFailCount.store(0, std::memory_order_relaxed);
-                            continue;
-                        }
-                    }
-                }
-                mSwitching.store(false, std::memory_order_release);
-                dlock.unlock();
                 Sleep(50);
                 continue;
             }
@@ -1254,14 +1140,9 @@ HRESULT WasapiPlayback::resetProxy()
             OutputType.dwChannelMask = STEREO;
         }
 
-        if(!mDevice->Flags.get<ChannelsRequest>() && OutputType.Format.nChannels > 2)
+        if(!mDevice->Flags.get<ChannelsRequest>())
         {
-            mDevice->FmtChans = DevFmtStereo;
-            OutputType.Format.nChannels = 2;
-            OutputType.dwChannelMask = STEREO;
-            OutputType.Format.nBlockAlign = static_cast<WORD>(OutputType.Format.nChannels * OutputType.Format.wBitsPerSample / 8);
-            OutputType.Format.nAvgBytesPerSec = OutputType.Format.nSamplesPerSec * OutputType.Format.nBlockAlign;
-            OutputType.Samples.wValidBitsPerSample = OutputType.Format.wBitsPerSample;
+            mDevice->FmtChans = mDevice->FmtChans;
         }
 
         if(IsEqualGUID(OutputType.SubFormat, KSDATAFORMAT_SUBTYPE_PCM))
@@ -1303,7 +1184,7 @@ HRESULT WasapiPlayback::resetProxy()
 
     SetDefaultWFXChannelOrder(mDevice);
 
-    hr = mClient->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+    hr = mClient->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
         buf_time.count(), 0, &OutputType.Format, nullptr);
     if(FAILED(hr))
     {
@@ -1429,6 +1310,8 @@ struct WasapiCapture final : public BackendBase, WasapiProxy {
     ALCenum captureSamples(al::byte *buffer, ALCuint samples) override;
     ALCuint availableSamples() override;
 
+    bool tryRestart();
+
     std::wstring mDevId;
 
     IMMDevice *mMMDev{nullptr};
@@ -1474,6 +1357,37 @@ FORCE_ALIGN int WasapiCapture::recordProc()
     al::vector<float> samples;
     while(!mKillNow.load(std::memory_order_relaxed))
     {
+        static auto lastCheck = std::chrono::steady_clock::now();
+        if(mDevId.empty() && !mSwitching.load(std::memory_order_relaxed)
+            && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-lastCheck).count() > 1500)
+        {
+            lastCheck = std::chrono::steady_clock::now();
+            void *eptr;
+            HRESULT ehr = CoCreateInstance(CLSID_MMDeviceEnumerator, nullptr, CLSCTX_INPROC_SERVER, IID_IMMDeviceEnumerator, &eptr);
+            if(SUCCEEDED(ehr))
+            {
+                auto Enumerator = static_cast<IMMDeviceEnumerator*>(eptr);
+                IMMDevice *defdev{nullptr};
+                HRESULT dhr = Enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &defdev);
+                if(FAILED(dhr)) dhr = Enumerator->GetDefaultAudioEndpoint(eCapture, eMultimedia, &defdev);
+                if(SUCCEEDED(dhr) && defdev)
+                {
+                    WCHAR *id = get_device_id(defdev);
+                    if(id)
+                    {
+                        bool changed = mCurDevId.empty() || wcscmp(id, mCurDevId.c_str()) != 0;
+                        if(changed)
+                        {
+                            if(tryRestart())
+                                mCurDevId = id;
+                        }
+                        CoTaskMemFree(id);
+                    }
+                    defdev->Release();
+                }
+                Enumerator->Release();
+            }
+        }
         if(mDevId.empty() && !mSwitching.exchange(true))
         {
             void *eptr;
@@ -1503,7 +1417,9 @@ FORCE_ALIGN int WasapiCapture::recordProc()
                             mMMDev = defdev;
                             mCurDevId = id;
                             CoTaskMemFree(id);
-                            HRESULT r = resetProxy();
+                            closeProxy();
+                            HRESULT r = openProxy();
+                            if(SUCCEEDED(r)) r = resetProxy();
                             if(SUCCEEDED(r))
                             {
                                 ResetEvent(mNotifyEvent);
@@ -1540,36 +1456,10 @@ FORCE_ALIGN int WasapiCapture::recordProc()
         hr = mCapture->GetNextPacketSize(&avail);
         if(FAILED(hr))
         {
-            if(hr == AUDCLNT_E_DEVICE_INVALIDATED && !mSwitching.exchange(true))
+            if(hr == AUDCLNT_E_DEVICE_INVALIDATED)
             {
-                std::unique_lock<WasapiCapture> dlock{*this};
-                if(mClient) mClient->Stop();
-                if(mClient) mClient->Reset();
-                if(mCapture)
-                {
-                    mCapture->Release();
-                    mCapture = nullptr;
-                }
-                HRESULT r = resetProxy();
-                if(SUCCEEDED(r))
-                {
-                    ResetEvent(mNotifyEvent);
-                    r = mClient ? mClient->Start() : E_FAIL;
-                    if(SUCCEEDED(r))
-                    {
-                        void *srv;
-                        r = mClient ? mClient->GetService(IID_IAudioCaptureClient, &srv) : E_FAIL;
-                        if(SUCCEEDED(r))
-                        {
-                            mCapture = static_cast<IAudioCaptureClient*>(srv);
-                            mSwitching.store(false, std::memory_order_release);
-                            dlock.unlock();
-                            continue;
-                        }
-                    }
-                }
-                mSwitching.store(false, std::memory_order_release);
-                dlock.unlock();
+                if(tryRestart())
+                    continue;
                 Sleep(50);
                 continue;
             }
@@ -1590,36 +1480,10 @@ FORCE_ALIGN int WasapiCapture::recordProc()
             hr = mCapture->GetBuffer(&rdata, &numsamples, &flags, nullptr, nullptr);
             if(FAILED(hr))
             {
-                if(hr == AUDCLNT_E_DEVICE_INVALIDATED && !mSwitching.exchange(true))
+                if(hr == AUDCLNT_E_DEVICE_INVALIDATED)
                 {
-                    std::unique_lock<WasapiCapture> dlock{*this};
-                    if(mClient) mClient->Stop();
-                    if(mClient) mClient->Reset();
-                    if(mCapture)
-                    {
-                        mCapture->Release();
-                        mCapture = nullptr;
-                    }
-                    HRESULT r = resetProxy();
-                    if(SUCCEEDED(r))
-                    {
-                        ResetEvent(mNotifyEvent);
-                        r = mClient ? mClient->Start() : E_FAIL;
-                        if(SUCCEEDED(r))
-                        {
-                            void *srv;
-                            r = mClient ? mClient->GetService(IID_IAudioCaptureClient, &srv) : E_FAIL;
-                            if(SUCCEEDED(r))
-                            {
-                                mCapture = static_cast<IAudioCaptureClient*>(srv);
-                                mSwitching.store(false, std::memory_order_release);
-                                dlock.unlock();
-                                continue;
-                            }
-                        }
-                    }
-                    mSwitching.store(false, std::memory_order_release);
-                    dlock.unlock();
+                    if(tryRestart())
+                        continue;
                     Sleep(50);
                     continue;
                 }
@@ -1692,7 +1556,9 @@ FORCE_ALIGN int WasapiCapture::recordProc()
                     mCapture->Release();
                     mCapture = nullptr;
                 }
-                HRESULT r = resetProxy();
+                closeProxy();
+                HRESULT r = openProxy();
+                if(SUCCEEDED(r)) r = resetProxy();
                 if(SUCCEEDED(r))
                 {
                     ResetEvent(mNotifyEvent);
@@ -2066,7 +1932,7 @@ HRESULT WasapiCapture::resetProxy()
             mDevice->Frequency, DevFmtTypeString(srcType), OutputType.Format.nSamplesPerSec);
     }
 
-    hr = mClient->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+    hr = mClient->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
         buf_time.count(), 0, &OutputType.Format, nullptr);
     if(FAILED(hr))
     {
@@ -2169,6 +2035,54 @@ ALCenum WasapiCapture::captureSamples(al::byte *buffer, ALCuint samples)
 {
     mRing->read(buffer, samples);
     return ALC_NO_ERROR;
+}
+
+bool WasapiPlayback::tryRestart()
+{
+    if(mSwitching.exchange(true)) return false;
+    if(mClient) mClient->Stop();
+    if(mRender) { mRender->Release(); mRender = nullptr; }
+    closeProxy();
+    HRESULT r = openProxy();
+    if(SUCCEEDED(r)) r = resetProxy();
+    if(SUCCEEDED(r))
+    {
+        ResetEvent(mNotifyEvent);
+        r = mClient ? mClient->Start() : E_FAIL;
+        if(SUCCEEDED(r))
+        {
+            void *srv;
+            r = mClient ? mClient->GetService(IID_IAudioRenderClient, &srv) : E_FAIL;
+            if(SUCCEEDED(r))
+                mRender = static_cast<IAudioRenderClient*>(srv);
+        }
+    }
+    mSwitching.store(false, std::memory_order_release);
+    return SUCCEEDED(r);
+}
+
+bool WasapiCapture::tryRestart()
+{
+    if(mSwitching.exchange(true)) return false;
+    if(mClient) mClient->Stop();
+    if(mCapture) { mCapture->Release(); mCapture = nullptr; }
+    closeProxy();
+    HRESULT r = openProxy();
+    if(SUCCEEDED(r)) r = resetProxy();
+    if(SUCCEEDED(r))
+    {
+        ResetEvent(mNotifyEvent);
+        r = mClient ? mClient->Start() : E_FAIL;
+        if(SUCCEEDED(r))
+        {
+            void *srv;
+            r = mClient ? mClient->GetService(IID_IAudioCaptureClient, &srv) : E_FAIL;
+            if(SUCCEEDED(r))
+                mCapture = static_cast<IAudioCaptureClient*>(srv);
+        }
+    }
+    mSwitching.store(false, std::memory_order_release);
+    return SUCCEEDED(r);
 }
 
 } // namespace

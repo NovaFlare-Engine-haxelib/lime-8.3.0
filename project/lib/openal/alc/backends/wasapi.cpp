@@ -980,7 +980,7 @@ HRESULT WasapiPlayback::resetProxy()
         return hr;
     }
 
-    WAVEFORMATEXTENSIBLE OutputType;
+    WAVEFORMATEXTENSIBLE OutputType{};
     if(!MakeExtensible(&OutputType, wfx))
     {
         CoTaskMemFree(wfx);
@@ -1089,6 +1089,7 @@ HRESULT WasapiPlayback::resetProxy()
         OutputType.Format.wBitsPerSample / 8);
     OutputType.Format.nAvgBytesPerSec = OutputType.Format.nSamplesPerSec *
         OutputType.Format.nBlockAlign;
+    OutputType.Format.cbSize = sizeof(OutputType) - sizeof(OutputType.Format);
 
     TraceFormat("Requesting playback format", &OutputType.Format);
     hr = mClient->IsFormatSupported(AUDCLNT_SHAREMODE_SHARED, &OutputType.Format, &wfx);

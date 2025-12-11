@@ -21,7 +21,6 @@ namespace lime {
 	const int analogAxisDeadZone = 1000;
 	static std::map<int, std::map<int, int>> gamepadsAxisMap;
 	static double accumulator = 0.0;
-	static int accumulatorOverThresholdCount = 0;
 	bool inBackground = false;
 	static bool renderTriggered = false;
 
@@ -138,7 +137,7 @@ namespace lime {
 						double realDeltaTime = currentUpdate - lastUpdate;
 						lastUpdate = currentUpdate;
 
-						const double MAX_DELTA_TIME = 5 * framePeriod;
+						const double MAX_DELTA_TIME = 3 * framePeriod;
 						if (realDeltaTime > MAX_DELTA_TIME) {
 							realDeltaTime = MAX_DELTA_TIME;
 						}
@@ -152,19 +151,6 @@ namespace lime {
 							RenderEvent::Dispatch (&renderEvent);
 							renderTriggered = true;
 							accumulator -= framePeriod;
-						}
-
-						{
-							const double threshold = 2 * framePeriod;
-							if (accumulator > threshold) {
-								accumulatorOverThresholdCount++;
-								if (accumulatorOverThresholdCount > 10) {
-									accumulator = 0.0;
-									accumulatorOverThresholdCount = 0;
-								}
-							} else if (accumulator < threshold) {
-								accumulatorOverThresholdCount = 0;
-							}
 						}
 					} else {
 						currentUpdate = SDL_GetTicks ();

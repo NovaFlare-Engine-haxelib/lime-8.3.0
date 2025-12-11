@@ -61,12 +61,11 @@ static SDL_INLINE SDL_bool WasapiFailed(_THIS, const HRESULT err)
         return SDL_FALSE;
     }
 
-    if (err == AUDCLNT_E_DEVICE_INVALIDATED) {
+    if (SDL_AtomicGet(&this->enabled)) {
+        if (this->hidden->client) {
+            IAudioClient_Stop(this->hidden->client);
+        }
         this->hidden->device_lost = SDL_TRUE;
-    } else if (SDL_AtomicGet(&this->enabled)) {
-        IAudioClient_Stop(this->hidden->client);
-        SDL_OpenedAudioDeviceDisconnected(this);
-        SDL_assert(!SDL_AtomicGet(&this->enabled));
     }
 
     return SDL_TRUE;
@@ -107,7 +106,25 @@ static int UpdateAudioStream(_THIS, const SDL_AudioSpec *oldspec)
         }
 
         if (!this->stream) {
-            return -1; /* SDL_NewAudioStream should have called SDL_SetError. */
+            SDL_AudioSpec fallback_spec = this->spec;
+            fallback_spec.channels = 2;
+            if (this->iscapture) {
+                this->stream = SDL_NewAudioStream(fallback_spec.format,
+                                                  fallback_spec.channels, fallback_spec.freq,
+                                                  this->callbackspec.format,
+                                                  this->callbackspec.channels,
+                                                  this->callbackspec.freq);
+            } else {
+                this->stream = SDL_NewAudioStream(this->callbackspec.format,
+                                                  this->callbackspec.channels,
+                                                  this->callbackspec.freq, fallback_spec.format,
+                                                  fallback_spec.channels, fallback_spec.freq);
+            }
+            if (!this->stream) {
+                return -1;
+            }
+            this->spec.channels = fallback_spec.channels;
+            SDL_CalculateAudioSpec(&this->spec);
         }
     }
 

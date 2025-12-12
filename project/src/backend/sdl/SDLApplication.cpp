@@ -22,7 +22,6 @@ namespace lime {
 	static std::map<int, std::map<int, int>> gamepadsAxisMap;
 	static double accumulator = 0.0;
 	bool inBackground = false;
-	static bool renderTriggered = false;
 
 
 	SDLApplication::SDLApplication () {
@@ -41,6 +40,7 @@ namespace lime {
 		SDL_LogSetPriority (SDL_LOG_CATEGORY_APPLICATION, SDL_LOG_PRIORITY_WARN);
 
 		currentApplication = this;
+		performanceFrequency = SDL_GetPerformanceFrequency ();
 		
 		newFrameGeneration = false;
 		framePeriod = 1000.0 / 60.0;
@@ -131,40 +131,43 @@ namespace lime {
 
 			case SDL_USEREVENT:
 
-				if (!inBackground) {
-					if (newFrameGeneration) {
-						currentUpdate = SDL_GetTicks ();
-						double realDeltaTime = currentUpdate - lastUpdate;
-						lastUpdate = currentUpdate;
-
+					if (!inBackground) {
+						if (newFrameGeneration) {
+							currentUpdate = SDL_GetPerformanceCounter ();
+							double realDeltaTime = (double)(currentUpdate - nextUpdate) * 1000.0 / (double)performanceFrequency;
+                            nextUpdate = currentUpdate + (Uint64)(framePeriod / 2.0);
+							//nextUpdate = currentUpdate + (Uint64)((framePeriod / 2.0) * (double)performanceFrequency / 1000.0);
+						
 						const double MAX_DELTA_TIME = 3 * framePeriod;
 						if (realDeltaTime > MAX_DELTA_TIME) {
 							realDeltaTime = MAX_DELTA_TIME;
 						}
 
-						accumulator += realDeltaTime;
+							accumulator += realDeltaTime;
 
 						if (accumulator >= framePeriod) {
-							applicationEvent.type = UPDATE;
-							applicationEvent.deltaTime = framePeriod;
+							
+								applicationEvent.type = UPDATE;
+								applicationEvent.deltaTime = (int)(((currentUpdate - lastUpdate) * 1000.0) / (double)performanceFrequency);
 							ApplicationEvent::Dispatch (&applicationEvent);
 							RenderEvent::Dispatch (&renderEvent);
-							renderTriggered = true;
 							accumulator -= framePeriod;
+
+							lastUpdate = currentUpdate;
 						}
-					} else {
-						currentUpdate = SDL_GetTicks ();
-						applicationEvent.type = UPDATE;
-						applicationEvent.deltaTime = currentUpdate - lastUpdate;
-						lastUpdate = currentUpdate;
+						} else {
+							currentUpdate = SDL_GetPerformanceCounter ();
+							applicationEvent.type = UPDATE;
+							applicationEvent.deltaTime = (int)(((currentUpdate - lastUpdate) * 1000.0) / (double)performanceFrequency);
+							lastUpdate = currentUpdate;
 
-						nextUpdate += framePeriod;
+							nextUpdate += (Uint64)(framePeriod * (double)performanceFrequency / 1000.0);
 
-						while (nextUpdate <= currentUpdate) {
+							while (nextUpdate <= currentUpdate) {
 
-							nextUpdate += framePeriod;
+								nextUpdate += (Uint64)(framePeriod * (double)performanceFrequency / 1000.0);
 
-						}
+							}
 
 						ApplicationEvent::Dispatch (&applicationEvent);
 						RenderEvent::Dispatch (&renderEvent);
@@ -369,7 +372,7 @@ namespace lime {
 	void SDLApplication::Init () {
 
 		active = true;
-		lastUpdate = SDL_GetTicks ();
+		lastUpdate = SDL_GetPerformanceCounter ();
 		nextUpdate = lastUpdate;
 
 	}
@@ -947,11 +950,11 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 
 		}
 		
-		currentUpdate = SDL_GetTicks ();
+		currentUpdate = SDL_GetPerformanceCounter ();
 
 		#if defined (IPHONE) || defined (EMSCRIPTEN)
 
-			if (currentUpdate >= nextUpdate) {
+					if (currentUpdate >= nextUpdate) {
 
 				event.type = SDL_USEREVENT;
 				HandleEvent (&event);
@@ -962,35 +965,28 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 		#else
 
 			if (newFrameGeneration) {
-				if (renderTriggered) {
-
+				if (currentUpdate >= nextUpdate) {
 					if (timerActive) SDL_RemoveTimer (timerID);
-					nextUpdate = currentUpdate + framePeriod;
 					OnTimer (0, 0);
-					renderTriggered = false;
-
-				} else if (currentUpdate >= nextUpdate) {
-
-					if (timerActive) SDL_RemoveTimer (timerID);
-					nextUpdate = currentUpdate + framePeriod/2;
-					OnTimer (0, 0);
-
 				} else if (!timerActive) {
-
 					timerActive = true;
-					timerID = SDL_AddTimer (nextUpdate - currentUpdate, OnTimer, 0);
+					{
+						Uint64 diff = nextUpdate - currentUpdate;
+						Uint32 ms = (Uint32)((diff * 1000 + performanceFrequency - 1) / performanceFrequency);
+						timerID = SDL_AddTimer (ms, OnTimer, 0);
+					}
 				}
 			} else {
 				if (currentUpdate >= nextUpdate) {
-
 					if (timerActive) SDL_RemoveTimer (timerID);
 					OnTimer (0, 0);
-
 				} else if (!timerActive) {
-
 					timerActive = true;
-					timerID = SDL_AddTimer (nextUpdate - currentUpdate, OnTimer, 0);
-
+					{
+						Uint64 diff = nextUpdate - currentUpdate;
+						Uint32 ms = (Uint32)((diff * 1000 + performanceFrequency - 1) / performanceFrequency);
+						timerID = SDL_AddTimer (ms, OnTimer, 0);
+					}
 				}
 			}
 		}

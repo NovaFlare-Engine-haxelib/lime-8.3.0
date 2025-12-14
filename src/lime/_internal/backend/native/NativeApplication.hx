@@ -499,6 +499,7 @@ class NativeApplication
 	private var realDeltaTime:Float = 0; //实际时间间隔，单位毫秒
 	private var forceDrawOnce:Bool = false;
 	private var hasOverlaySnapshot:Bool = false;
+	private var devMode:Bool = false;
 	private function drawCheck(window:Window):Bool
 	{
 		if (forceDrawOnce) {
@@ -513,19 +514,27 @@ class NativeApplication
 		framePeriod = (1000 / window.drawFrameRate); //前面已经检测了当前设置更新帧率比屏幕刷新率高
 
 		currentUpdate = System.getTimer(); //当前帧更新时间
-		realDeltaTime = currentUpdate - lastUpdate;
-		lastUpdate = System.getTimer();
-		
-		if (realDeltaTime > 5 * framePeriod) {
-			realDeltaTime = 5 * framePeriod;
-		}
 
-		accumulator += realDeltaTime; //累加器
+		if (devMode) { //暂时先雪藏下这种帧生成，效果真的不行还
+			realDeltaTime = currentUpdate - lastUpdate;
+			lastUpdate = System.getTimer();
 
-		if (accumulator >= framePeriod)
-		{
-			accumulator -= framePeriod;
-			return true;
+			if (realDeltaTime > 5 * framePeriod) {
+				realDeltaTime = 5 * framePeriod;
+			}
+
+			accumulator += realDeltaTime; //累加器
+
+			if (accumulator >= framePeriod)
+			{
+				accumulator -= framePeriod;
+				return true;
+			}
+		} else {
+			if (currentUpdate - lastUpdate >= framePeriod) {
+				lastUpdate += Math.floor((currentUpdate - lastUpdate) / framePeriod) * framePeriod;
+				return true;
+			}
 		}
 
 		return false;

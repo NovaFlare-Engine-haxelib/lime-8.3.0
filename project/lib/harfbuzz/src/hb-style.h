@@ -1,5 +1,5 @@
 /*
- * Copyright © 2019  Ebrahim Byagowi
+ * Copyright (c) 2019  Ebrahim Byagowi
  *
  *  This is part of HarfBuzz, a text shaping library.
  *
@@ -49,7 +49,7 @@ HB_BEGIN_DECLS
  * Typical right-leaning Italic fonts have a positive slant ratio (typically around 0.2)
  * @HB_STYLE_TAG_WIDTH: Used to vary width of text from narrower to wider.
  * Non-zero. Values can be interpreted as a percentage of whatever the font
- * designer considers “normal width” for that font design.
+ * designer considers "normal width" for that font design.
  * @HB_STYLE_TAG_WEIGHT: Used to vary stroke thicknesses or other design details
  * to give variation from lighter to blacker. Values can be interpreted in direct
  * comparison to values for usWeightClass in the OS/2 table,

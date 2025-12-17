@@ -95,7 +95,8 @@ namespace lime {
 
 		if (!this->data) {
 
-			//this->data = new ArrayBufferView (height * stride);
+			this->data = new ArrayBufferView (alloc_null ());
+			this->data->Resize (height * stride);
 
 		} else {
 

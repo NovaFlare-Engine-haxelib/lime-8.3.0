@@ -616,9 +616,9 @@ class IOSPlatform extends PlatformTarget
 
 						var baseImageName = Path.withoutExtension(imageset.name);
 
-						var imageScales = ["1x", "2x", "3x"];
+						var graphicScales = ["1x", "2x", "3x"];
 						var images:Array<{idiom:String, filename:String, scale:String}> = [];
-						for (scale in imageScales)
+						for (scale in graphicScales)
 						{
 							var filename = baseImageName + (scale == "1x" ? "" : "@" + scale) + ".png";
 							if (FileSystem.exists(Path.combine(assetsPath, filename)))

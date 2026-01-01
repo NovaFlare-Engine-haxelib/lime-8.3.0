@@ -535,14 +535,13 @@ class NativeApplication
 				lastUpdate += Math.floor((currentUpdate - lastUpdate) / framePeriod) * framePeriod;
 				//trace('normal update');
 				return true;
-			}/* else {
+			}/*else {
 				if ((framePeriod - (currentUpdate - lastUpdate)) < (currentUpdate - lastUpdate)) {
 					lastUpdate += framePeriod;
 					//trace('fast update');
 					return true;
 				}
-			}
-				*/
+			} */
 		}
 
 		return false;

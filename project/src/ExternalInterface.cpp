@@ -2093,7 +2093,7 @@ namespace lime {
 			}
 
 			value ret = imageBuffer.Value (buffer);
-			alloc_field (ret, val_id ("imageScale"), alloc_float (scale));
+			alloc_field (ret, val_id ("graphicScale"), alloc_float (scale));
 			return ret;
 
 		}

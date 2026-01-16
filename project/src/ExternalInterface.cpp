@@ -3398,9 +3398,38 @@ namespace lime {
 	}
 
 
+	void lime_window_context_make_current_custom (value window, double context) {
+
+		((Window*)val_data (window))->ContextMakeCurrent ((void*)(uintptr_t)context);
+
+	}
+
+
+	double lime_window_context_create (value window) {
+
+		Window* windowObject = (Window*)val_data (window);
+		return (uintptr_t)windowObject->CreateContext ();
+
+	}
+
+
 	HL_PRIM void HL_NAME(hl_window_context_make_current) (HL_CFFIPointer* window) {
 
 		((Window*)window->ptr)->ContextMakeCurrent ();
+
+	}
+
+
+	HL_PRIM void HL_NAME(hl_window_context_make_current_custom) (HL_CFFIPointer* window, double context) {
+
+		((Window*)window->ptr)->ContextMakeCurrent ((void*)(uintptr_t)context);
+
+	}
+
+
+	HL_PRIM double HL_NAME(hl_window_context_create) (HL_CFFIPointer* window) {
+
+		return (uintptr_t)((Window*)window->ptr)->CreateContext ();
 
 	}
 
@@ -4239,7 +4268,9 @@ namespace lime {
 	DEFINE_PRIME1v (lime_window_close);
 	DEFINE_PRIME1v (lime_window_context_flip);
 	DEFINE_PRIME1 (lime_window_context_lock);
+	DEFINE_PRIME1 (lime_window_context_create);
 	DEFINE_PRIME1v (lime_window_context_make_current);
+	DEFINE_PRIME2v (lime_window_context_make_current_custom);
 	DEFINE_PRIME1v (lime_window_context_unlock);
 	DEFINE_PRIME5 (lime_window_create);
 	DEFINE_PRIME2v (lime_window_event_manager_register);
@@ -4435,7 +4466,9 @@ namespace lime {
 	DEFINE_HL_PRIM (_VOID, hl_window_close, _TCFFIPOINTER);
 	DEFINE_HL_PRIM (_VOID, hl_window_context_flip, _TCFFIPOINTER);
 	DEFINE_HL_PRIM (_DYN, hl_window_context_lock, _TCFFIPOINTER);
+	DEFINE_HL_PRIM (_F64, hl_window_context_create, _TCFFIPOINTER);
 	DEFINE_HL_PRIM (_VOID, hl_window_context_make_current, _TCFFIPOINTER);
+	DEFINE_HL_PRIM (_VOID, hl_window_context_make_current_custom, _TCFFIPOINTER _F64);
 	DEFINE_HL_PRIM (_VOID, hl_window_context_unlock, _TCFFIPOINTER);
 	DEFINE_HL_PRIM (_TCFFIPOINTER, hl_window_create, _TCFFIPOINTER _I32 _I32 _I32 _STRING);
 	DEFINE_HL_PRIM (_VOID, hl_window_event_manager_register, _FUN (_VOID, _NO_ARG) _TWINDOW_EVENT);

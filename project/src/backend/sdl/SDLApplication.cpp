@@ -1024,7 +1024,7 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 				} else if (!timerActive) {
 
 					timerActive = true;
-					timerID = SDL_AddTimer (nextUpdate - currentUpdate, OnTimer, 0);
+					timerID = SDL_AddTimer ((Uint32)(nextUpdate - currentUpdate), OnTimer, 0);
 
 				}
 			}

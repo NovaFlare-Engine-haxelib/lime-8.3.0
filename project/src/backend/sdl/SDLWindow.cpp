@@ -490,6 +490,33 @@ namespace lime {
 	}
 
 
+	void SDLWindow::ContextMakeCurrent (void* context) {
+
+		if (sdlWindow && context) {
+
+			SDL_GL_MakeCurrent (sdlWindow, (SDL_GLContext)context);
+
+		}
+
+	}
+
+
+	void* SDLWindow::CreateContext () {
+
+		if (sdlWindow) {
+
+			SDL_GL_SetAttribute (SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
+			SDL_GLContext context = SDL_GL_CreateContext (sdlWindow);
+			SDL_GL_SetAttribute (SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 0);
+			return (void*)context;
+
+		}
+
+		return 0;
+
+	}
+
+
 	void SDLWindow::ContextUnlock () {
 
 		if (sdlTexture) {

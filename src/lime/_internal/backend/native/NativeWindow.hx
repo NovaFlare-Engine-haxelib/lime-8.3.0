@@ -218,6 +218,27 @@ class NativeWindow
 		}
 	}
 
+	public function contextCreate():Float
+	{
+		if (handle != null)
+		{
+			#if (!macro && lime_cffi)
+			return NativeCFFI.lime_window_context_create(handle);
+			#end
+		}
+		return 0;
+	}
+
+	public function contextMakeCurrentCustom(context:Float):Void
+	{
+		if (handle != null)
+		{
+			#if (!macro && lime_cffi)
+			NativeCFFI.lime_window_context_make_current_custom(handle, context);
+			#end
+		}
+	}
+
 	public function contextFlip():Void
 	{
 		#if (!macro && lime_cffi)

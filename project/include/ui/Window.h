@@ -29,6 +29,8 @@ namespace lime {
 			virtual void ContextFlip () = 0;
 			virtual void* ContextLock (bool useCFFIValue) = 0;
 			virtual void ContextMakeCurrent () = 0;
+			virtual void ContextMakeCurrent (void* context) = 0;
+			virtual void* CreateContext () = 0;
 			virtual void ContextUnlock () = 0;
 			virtual void Focus () = 0;
 			virtual void* GetContext () = 0;

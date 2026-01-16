@@ -295,7 +295,11 @@ class NativeCFFI
 
 	@:cffi private static function lime_window_context_lock(handle:Dynamic):Dynamic;
 
+	@:cffi private static function lime_window_context_create(handle:Dynamic):Float;
+
 	@:cffi private static function lime_window_context_make_current(handle:Dynamic):Void;
+
+	@:cffi private static function lime_window_context_make_current_custom(handle:Dynamic, context:Float):Void;
 
 	@:cffi private static function lime_window_context_unlock(handle:Dynamic):Void;
 
@@ -579,8 +583,12 @@ class NativeCFFI
 		false));
 	private static var lime_window_context_lock = new cpp.Callable<cpp.Object->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_window_context_lock", "oo",
 		false));
+	private static var lime_window_context_create = new cpp.Callable<cpp.Object->Float>(cpp.Prime._loadPrime("lime", "lime_window_context_create", "od",
+		false));
 	private static var lime_window_context_make_current = new cpp.Callable<cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime",
 		"lime_window_context_make_current", "ov", false));
+	private static var lime_window_context_make_current_custom = new cpp.Callable<cpp.Object->Float->cpp.Void>(cpp.Prime._loadPrime("lime",
+		"lime_window_context_make_current_custom", "odv", false));
 	private static var lime_window_context_unlock = new cpp.Callable<cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_window_context_unlock", "ov",
 		false));
 	private static var lime_window_create = new cpp.Callable<cpp.Object->Int->Int->Int->String->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_window_create",
@@ -769,7 +777,9 @@ class NativeCFFI
 	private static var lime_window_close = CFFI.load("lime", "lime_window_close", 1);
 	private static var lime_window_context_flip = CFFI.load("lime", "lime_window_context_flip", 1);
 	private static var lime_window_context_lock = CFFI.load("lime", "lime_window_context_lock", 1);
+	private static var lime_window_context_create = CFFI.load("lime", "lime_window_context_create", 1);
 	private static var lime_window_context_make_current = CFFI.load("lime", "lime_window_context_make_current", 1);
+	private static var lime_window_context_make_current_custom = CFFI.load("lime", "lime_window_context_make_current_custom", 2);
 	private static var lime_window_context_unlock = CFFI.load("lime", "lime_window_context_unlock", 1);
 	private static var lime_window_create = CFFI.load("lime", "lime_window_create", 5);
 	private static var lime_window_focus = CFFI.load("lime", "lime_window_focus", 1);
@@ -1303,7 +1313,14 @@ class NativeCFFI
 		return null;
 	}
 
+	@:hlNative("lime", "hl_window_context_create") private static function lime_window_context_create(handle:CFFIPointer):Float
+	{
+		return 0;
+	}
+
 	@:hlNative("lime", "hl_window_context_make_current") private static function lime_window_context_make_current(handle:CFFIPointer):Void {}
+
+	@:hlNative("lime", "hl_window_context_make_current_custom") private static function lime_window_context_make_current_custom(handle:CFFIPointer, context:Float):Void {}
 
 	@:hlNative("lime", "hl_window_context_unlock") private static function lime_window_context_unlock(handle:CFFIPointer):Void {}
 

@@ -83,7 +83,9 @@ namespace lime {
 		SDL_EventState (SDL_DROPFILE, SDL_ENABLE);
 		SDLJoystick::Init ();
 
+		#if defined(_WIN32) || defined(HX_MACOS)
 		SDL_AddEventWatch (HandleEventWatch, this);
+		#endif
 
 		#ifdef HX_MACOS
 		CFURLRef resourcesURL = CFBundleCopyResourcesDirectoryURL (CFBundleGetMainBundle ());
@@ -103,7 +105,9 @@ namespace lime {
 
 	SDLApplication::~SDLApplication () {
 
+		#if defined(_WIN32) || defined(HX_MACOS)
 		SDL_DelEventWatch (HandleEventWatch, this);
+		#endif
 
 	}
 
@@ -1036,15 +1040,16 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 	}
 
 
+	#if defined(_WIN32) || defined(HX_MACOS)
 	int SDLCALL SDLApplication::HandleEventWatch (void *userdata, SDL_Event *event) {
 
 		SDLApplication *app = (SDLApplication*)userdata;
 
-		if (event->type == SDL_WINDOWEVENT ||
+		if (event->type == SDL_WINDOWEVENT && (
 			event->window.event == SDL_WINDOWEVENT_RESIZED ||
 			event->window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
 			event->window.event == SDL_WINDOWEVENT_MOVED ||
-			event->window.event == SDL_WINDOWEVENT_EXPOSED) {
+			event->window.event == SDL_WINDOWEVENT_EXPOSED)) {
 
 			SDL_Event userEvent;
 			userEvent.type = SDL_USEREVENT;
@@ -1052,11 +1057,13 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 			userEvent.user.data1 = NULL;
 			userEvent.user.data2 = NULL;
 			app->HandleEvent (&userEvent);
+
 		}
 
 		return 0;
 
 	}
+	#endif
 
 
 	int SDLApplication::WaitEvent (SDL_Event *event) {

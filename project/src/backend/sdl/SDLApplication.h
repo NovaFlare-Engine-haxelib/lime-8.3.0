@@ -55,7 +55,9 @@ namespace lime {
 
 			static void UpdateFrame ();
 			static void UpdateFrame (void*);
+			#if defined(_WIN32) || defined(HX_MACOS)
 			static int SDLCALL HandleEventWatch (void *userdata, SDL_Event *event);
+			#endif
 
 			static SDLApplication* currentApplication;
 

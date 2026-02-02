@@ -114,6 +114,7 @@ class NativeApplication
 			pauseTimer = -1;
 		}
 		#end
+		lastUpdate = System.getTimerNano();
 	}
 
 	public function exec():Int
@@ -422,40 +423,7 @@ class NativeApplication
 
 							if (!window.onRender.canceled)
 							{
-								#if android
-								if (!hasOverlaySnapshot) {
-									var w = window.__width;
-									var h = window.__height;
-									if (w > 0 && h > 0) {
-										var size = w * h * 4;
-										var pixels = haxe.io.Bytes.alloc(size);
-										GL.readPixels(0, 0, w, h, GL.RGBA, GL.UNSIGNED_BYTE, pixels);
-										var argb:Array<Int> = [];
-										argb.resize(w * h);
-										var idx = 0;
-										for (y in 0...h) {
-											var srcY = h - 1 - y;
-											var base = srcY * w * 4;
-											for (x in 0...w) {
-												var off = base + x * 4;
-												var r = pixels.get(off);
-												var g = pixels.get(off + 1);
-												var b = pixels.get(off + 2);
-												var a = pixels.get(off + 3);
-												argb[idx++] = (a << 24) | (r << 16) | (g << 8) | b;
-											}
-										}
-										var setOverlayPixels = JNI.createStaticMethod("org/libsdl/app/SDLActivity", "setOverlayPixels", "([III)V");
-										setOverlayPixels(argb, w, h);
-										hasOverlaySnapshot = true;
-									}
-								}
-								#end
 								window.__backend.contextFlip();
-								#if android
-								var onFirstFrameDrawn = JNI.createStaticMethod("org/libsdl/app/SDLActivity", "onFirstFrameDrawn", "()V");
-								onFirstFrameDrawn();
-								#end
 							}
 						}
 					}
@@ -498,52 +466,37 @@ class NativeApplication
 	private var accumulator:Float = 0; //累加器，单位毫秒
 	private var realDeltaTime:Float = 0; //实际时间间隔，单位毫秒
 	private var forceDrawOnce:Bool = false;
-	private var hasOverlaySnapshot:Bool = false;
 	private var devMode:Bool = false;
 	private function drawCheck(window:Window):Bool
 	{
 		if (forceDrawOnce) {
 			forceDrawOnce = false;
+			window.isFullFrame = true;
 			return true;
 		}
 		if (window.frameRate <= window.drawFrameRate || !window.splitUpdate) {
+			window.isFullFrame = true;
 			return true;
 		}
 		//如果设置的更新帧率小于屏幕刷新率，就直接绘制
 
 		framePeriod = (1000 / window.drawFrameRate); //前面已经检测了当前设置更新帧率比屏幕刷新率高
 
-		currentUpdate = System.getTimer(); //当前帧更新时间
+		currentUpdate = System.getTimerNano(); //当前帧更新时间
 
-		if (devMode) { //暂时先雪藏下这种帧生成，效果真的不行还
-			realDeltaTime = currentUpdate - lastUpdate;
-			lastUpdate = System.getTimer();
-
-			if (realDeltaTime > 5 * framePeriod) {
-				realDeltaTime = 5 * framePeriod;
+		if (currentUpdate - lastUpdate >= framePeriod - 0.5) {
+			var delta = currentUpdate - lastUpdate;
+			if (delta < framePeriod) {
+				lastUpdate += framePeriod;
+			} else {
+				lastUpdate += Math.floor(delta / framePeriod) * framePeriod;
 			}
-
-			accumulator += realDeltaTime; //累加器
-
-			if (accumulator >= framePeriod)
-			{
-				accumulator -= framePeriod;
-				return true;
-			}
-		} else {
-			if (currentUpdate - lastUpdate >= framePeriod) {
-				lastUpdate += Math.floor((currentUpdate - lastUpdate) / framePeriod) * framePeriod;
-				//trace('normal update');
-				return true;
-			}/*else {
-				if ((framePeriod - (currentUpdate - lastUpdate)) < (currentUpdate - lastUpdate)) {
-					lastUpdate += framePeriod;
-					//trace('fast update');
-					return true;
-				}
-			} */
+			//trace('normal update');
+			window.isFullFrame = true;
+			return true;
 		}
 
+		window.isFullFrame = false;
 		return false;
 	}
 
@@ -681,9 +634,6 @@ class NativeApplication
                                     argb[idx++] = (a << 24) | (r << 16) | (g << 8) | b;
                                 }
                             }
-                            var setOverlayPixels = JNI.createStaticMethod("org/libsdl/app/SDLActivity", "setOverlayPixels", "([III)V");
-                            setOverlayPixels(argb, w, h);
-                            hasOverlaySnapshot = true;
                         }
                     }
                     #end
@@ -793,10 +743,10 @@ class NativeApplication
 
 @:keep /*private*/ class ApplicationEventInfo
 {
-	public var deltaTime:Int;
+	public var deltaTime:Float;
 	public var type:ApplicationEventType;
 
-	public function new(type:ApplicationEventType = null, deltaTime:Int = 0)
+	public function new(type:ApplicationEventType = null, deltaTime:Float = 0)
 	{
 		this.type = type;
 		this.deltaTime = deltaTime;

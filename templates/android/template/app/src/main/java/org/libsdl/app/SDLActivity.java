@@ -482,7 +482,6 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
             mHIDDeviceManager.setFrozen(true);
         }
         if (!mHasMultiWindow) {
-            captureSurfaceFrame();
             pauseNativeThread();
         }
     }
@@ -498,7 +497,6 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         if (!mHasMultiWindow) {
             resumeNativeThread();
         }
-        showLoadingOverlay();
     }
 
     @Override
@@ -1230,9 +1228,6 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
 
     public static void showLoadingOverlay() {
         if (mLoadingView != null) {
-            if (mSnapshotView != null && mLastFrameBitmap != null) {
-                mSnapshotView.setImageBitmap(mLastFrameBitmap);
-            }
             mLoadingView.setVisibility(View.VISIBLE);
         }
     }
@@ -1240,9 +1235,6 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     public static void hideLoadingOverlay() {
         if (mLoadingView != null) {
             mLoadingView.setVisibility(View.GONE);
-        }
-        if (mSnapshotView != null) {
-            mSnapshotView.setImageBitmap(null);
         }
     }
 
@@ -1257,27 +1249,6 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         }
     }
 
-    public static void captureSurfaceFrame() {
-        if (Build.VERSION.SDK_INT >= 24 && mSurface != null) {
-            try {
-                Bitmap bmp = Bitmap.createBitmap(mSurface.getWidth(), mSurface.getHeight(), Bitmap.Config.ARGB_8888);
-                PixelCopy.request(mSurface.getHolder().getSurface(), bmp, new PixelCopy.OnPixelCopyFinishedListener() {
-                    @Override
-                    public void onPixelCopyFinished(int result) {
-                        if (result == PixelCopy.SUCCESS) {
-                            mLastFrameBitmap = bmp;
-                        }
-                    }
-                }, new Handler(Looper.getMainLooper()));
-            } catch (Exception ignored) {}
-        }
-    }
-
-    public static void setOverlayPixels(int[] argb, int width, int height) {
-        try {
-            mLastFrameBitmap = Bitmap.createBitmap(argb, width, height, Bitmap.Config.ARGB_8888);
-        } catch (Exception ignored) {}
-    }
 
     /**
      * This method is called by SDL using JNI.

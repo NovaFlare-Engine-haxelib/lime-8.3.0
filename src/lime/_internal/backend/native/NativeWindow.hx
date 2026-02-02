@@ -72,7 +72,7 @@ class NativeWindow
 		if (!Reflect.hasField(contextAttributes, "depth")) contextAttributes.depth = true;
 		if (!Reflect.hasField(contextAttributes, "hardware")) contextAttributes.hardware = true;
 		if (!Reflect.hasField(contextAttributes, "stencil")) contextAttributes.stencil = true;
-		if (!Reflect.hasField(contextAttributes, "vsync")) contextAttributes.vsync = false;
+		if (contextAttributes.vsync == null) contextAttributes.vsync = false;
 
 		#if (cairo || (!lime_opengl && !lime_opengles))
 		contextAttributes.type = CAIRO;
@@ -779,8 +779,6 @@ class NativeWindow
 	public function setFallbackOverlayBitmap(pixels:Array<Int>, width:Int, height:Int):Void
 	{
 		#if android
-		var setOverlayPixels = JNI.createStaticMethod("org/libsdl/app/SDLActivity", "setOverlayPixels", "([III)V");
-		setOverlayPixels(pixels, width, height);
 		#end
 	}
 
@@ -813,8 +811,6 @@ class NativeWindow
 				argb[idx++] = (a << 24) | (r << 16) | (g << 8) | b;
 			}
 		}
-		var setOverlayPixels = JNI.createStaticMethod("org/libsdl/app/SDLActivity", "setOverlayPixels", "([III)V");
-		setOverlayPixels(argb, w, h);
 		#end
 	}
 }

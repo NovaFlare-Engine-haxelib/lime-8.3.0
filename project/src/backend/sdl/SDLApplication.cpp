@@ -9,6 +9,19 @@
 #include <CoreFoundation/CoreFoundation.h>
 #endif
 
+#ifdef _WIN32
+#include <timeapi.h>
+#include <immintrin.h>
+#endif
+
+#if defined(_MSC_VER) || defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_X64)
+#define LIME_PAUSE() _mm_pause()
+#elif defined(__arm__) || defined(__aarch64__) || defined(_M_ARM) || defined(_M_ARM64)
+#define LIME_PAUSE() __asm__ __volatile__ ("yield")
+#else
+#define LIME_PAUSE()
+#endif
+
 #ifdef EMSCRIPTEN
 #include "emscripten.h"
 #endif
@@ -72,6 +85,8 @@ namespace lime {
 		SDL_EventState (SDL_DROPFILE, SDL_ENABLE);
 		SDLJoystick::Init ();
 
+		SDL_AddEventWatch (HandleEventWatch, this);
+
 		#ifdef HX_MACOS
 		CFURLRef resourcesURL = CFBundleCopyResourcesDirectoryURL (CFBundleGetMainBundle ());
 		char path[PATH_MAX];
@@ -90,12 +105,16 @@ namespace lime {
 
 	SDLApplication::~SDLApplication () {
 
-
+		SDL_DelEventWatch (HandleEventWatch, this);
 
 	}
 
 
 	int SDLApplication::Exec () {
+		
+		#ifdef _WIN32
+		timeBeginPeriod (1);
+		#endif
 
 		Init ();
 
@@ -148,21 +167,32 @@ namespace lime {
 						}
 						uint64_t nowPerf = SDL_GetPerformanceCounter ();
 						double realDeltaTime = (double)(nowPerf - lastPerfCounter) * 1000.0 / (double)perfFreq;
-						const double MAX_DELTA_TIME = 3 * framePeriod;
+						const double MAX_DELTA_TIME = 10 * framePeriod;
 						if (realDeltaTime < 0) realDeltaTime = 0;
 						if (realDeltaTime > MAX_DELTA_TIME) realDeltaTime = MAX_DELTA_TIME;
 						accumulator += realDeltaTime;
 						if (accumulator >= framePeriod) {
+							lastPerfCounter = nowPerf;
+							lastUpdate = (double)nowPerf * 1000.0 / (double)perfFreq;
+
 							applicationEvent.type = UPDATE;
-							applicationEvent.deltaTime = (int)realDeltaTime;
+							applicationEvent.deltaTime = realDeltaTime;
 							ApplicationEvent::Dispatch (&applicationEvent);
 							RenderEvent::Dispatch (&renderEvent);
+
 							accumulator -= framePeriod;
-							lastPerfCounter = nowPerf;
-							lastUpdate = (Uint32)(nowPerf * 1000.0 / (double)perfFreq);
+							if (accumulator > framePeriod * 2) accumulator = 0;
 						}
 					} else {
-						currentUpdate = SDL_GetTicks ();
+						if (!hrInit) {
+							perfFreq = SDL_GetPerformanceFrequency ();
+							lastPerfCounter = SDL_GetPerformanceCounter ();
+							hrInit = true;
+						}
+						
+						uint64_t nowPerf = SDL_GetPerformanceCounter ();
+						currentUpdate = (double)nowPerf * 1000.0 / (double)perfFreq;
+						
 						applicationEvent.type = UPDATE;
 						applicationEvent.deltaTime = currentUpdate - lastUpdate;
 						lastUpdate = currentUpdate;
@@ -378,8 +408,18 @@ namespace lime {
 	void SDLApplication::Init () {
 
 		active = true;
-		lastUpdate = SDL_GetTicks ();
-		nextUpdate = lastUpdate;
+		if (!hrInit) {
+			perfFreq = SDL_GetPerformanceFrequency ();
+			hrInit = true;
+		}
+		uint64_t now = SDL_GetPerformanceCounter ();
+		lastPerfCounter = now;
+		nextPerfCounter = now + periodPerfTicks;
+		
+		double nowMs = (double)now * 1000.0 / (double)perfFreq;
+		lastUpdate = nowMs;
+		currentUpdate = nowMs;
+		nextUpdate = nowMs + framePeriod;
 
 	}
 
@@ -949,15 +989,8 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 		if (active) {
 			if (firstTime) {
 				firstTime = false;
-			} else if (newFrameGeneration) {
-				if (SDL_PollEvent (&event)) {
-					HandleEvent (&event);
-					event.type = -1;
-					if (!active)
-						return active;
-				}
 			} else {
-				if (WaitEvent (&event)) {
+				if (SDL_PollEvent (&event)) {
 					HandleEvent (&event);
 					event.type = -1;
 					if (!active)
@@ -976,11 +1009,28 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 
 		}
 		
-		currentUpdate = SDL_GetTicks ();
+		if (!hrInit) {
+			perfFreq = SDL_GetPerformanceFrequency ();
+			lastPerfCounter = SDL_GetPerformanceCounter ();
+			periodPerfTicks = (uint64_t)(framePeriod * (double)perfFreq / 1000.0);
+			nextPerfCounter = lastPerfCounter + periodPerfTicks;
+			hrInit = true;
+		}
+
+		uint64_t nowPerf = SDL_GetPerformanceCounter ();
+		double nowMs = (double)nowPerf * 1000.0 / (double)perfFreq;
+		currentUpdate = (Uint32)nowMs;
 
 		#if defined (IPHONE) || defined (EMSCRIPTEN)
 
-			if (currentUpdate >= nextUpdate) {
+			uint64_t nowPerf = SDL_GetPerformanceCounter ();
+			if (!hrInit) {
+				perfFreq = SDL_GetPerformanceFrequency ();
+				hrInit = true;
+			}
+			double nowMs = (double)nowPerf * 1000.0 / (double)perfFreq;
+
+			if (nowMs >= nextUpdate) {
 
 				event.type = SDL_USEREVENT;
 				HandleEvent (&event);
@@ -1001,19 +1051,19 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 				uint64_t nowPerf = SDL_GetPerformanceCounter ();
 				if (nowPerf >= nextPerfCounter) {
 					SDL_Event ev;
-					SDL_UserEvent ue;
-					ue.type = SDL_USEREVENT;
-					ue.code = 0;
-					ue.data1 = NULL;
-					ue.data2 = NULL;
 					ev.type = SDL_USEREVENT;
-					ev.user = ue;
-					SDL_PushEvent (&ev);
+					ev.user.code = 0;
+					ev.user.data1 = NULL;
+					ev.user.data2 = NULL;
+					
+					HandleEvent (&ev);
+					
 					nextPerfCounter += periodPerfTicks;
+					if (nextPerfCounter + periodPerfTicks < nowPerf) {
+						nextPerfCounter = nowPerf + periodPerfTicks;
+					}
 				} else {
-					double ms = (double)(nextPerfCounter - nowPerf) * 1000.0 / (double)perfFreq;
-					if (ms >= 2.0) SDL_Delay ((Uint32)(ms - 1.0));
-					else SDL_Delay (0);
+					LIME_PAUSE();
 				}
 			} else {
 				if (currentUpdate >= nextUpdate) {
@@ -1024,9 +1074,12 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 				} else if (!timerActive) {
 
 					timerActive = true;
-					timerID = SDL_AddTimer ((Uint32)(nextUpdate - currentUpdate), OnTimer, 0);
+					Uint32 wait = (Uint32)(nextUpdate - currentUpdate);
+					if (wait > (Uint32)framePeriod) wait = (Uint32)framePeriod;
+					timerID = SDL_AddTimer (wait, OnTimer, 0);
 
 				}
+				LIME_PAUSE();
 			}
 		}
 
@@ -1059,12 +1112,42 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 	}
 
 
+	int SDLCALL SDLApplication::HandleEventWatch (void *userdata, SDL_Event *event) {
+
+		SDLApplication *app = (SDLApplication*)userdata;
+
+		if (event->type == SDL_WINDOWEVENT ||
+			event->window.event == SDL_WINDOWEVENT_RESIZED ||
+			event->window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
+			event->window.event == SDL_WINDOWEVENT_MOVED ||
+			event->window.event == SDL_WINDOWEVENT_EXPOSED) {
+
+			SDL_Event userEvent;
+			userEvent.type = SDL_USEREVENT;
+			userEvent.user.code = 0;
+			userEvent.user.data1 = NULL;
+			userEvent.user.data2 = NULL;
+			app->HandleEvent (&userEvent);
+		}
+
+		return 0;
+
+	}
+
+
 	int SDLApplication::WaitEvent (SDL_Event *event) {
 
-		#if defined(HX_MACOS) || defined(ANDROID)
+		#if defined(HX_MACOS)
 
 		System::GCEnterBlocking ();
 		int result = SDL_WaitEvent (event);
+		System::GCExitBlocking ();
+		return result;
+
+		#elif defined(ANDROID)
+
+		System::GCEnterBlocking ();
+		int result = SDL_PollEvent (event);
 		System::GCExitBlocking ();
 		return result;
 
@@ -1092,7 +1175,8 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 
 					if (!isBlocking) System::GCEnterBlocking ();
 					isBlocking = true;
-					SDL_Delay (1);
+					LIME_PAUSE();
+					SDL_Delay (0);
 					break;
 
 			}

@@ -48,6 +48,7 @@ class Window
 	public var frameRate(get, set):Float;
 	public var newFrameGeneration(get, set):Bool;
 	public var drawFrameRate(get, set):Int;
+	public var isFullFrame(get, set):Bool;
 
 	public var fullscreen(get, set):Bool;
 	public var height(get, set):Int;
@@ -173,6 +174,7 @@ class Window
 	@:noCompletion private var __splitUpdate:Bool = false;
 	@:noCompletion private var __newFrameGeneration:Bool = true;
 	@:noCompletion private var __drawFrameRate:Int;
+	@:noCompletion private var __isFullFrame:Bool;
 
 	#if commonjs
 	private static function __init__()
@@ -613,6 +615,16 @@ class Window
 	{
 		__newFrameGeneration = value;
 		return __backend.setNewFrameGeneration(value);
+	}
+
+	@:noCompletion private inline function get_isFullFrame():Bool
+	{
+		return __isFullFrame;
+	}
+
+	@:noCompletion private function set_isFullFrame(value:Bool):Bool
+	{
+		return __isFullFrame = value;
 	}
 
 	@:noCompletion private inline function get_fullscreen():Bool

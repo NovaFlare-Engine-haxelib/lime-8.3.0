@@ -56,6 +56,7 @@ namespace lime {
 
 			static void UpdateFrame ();
 			static void UpdateFrame (void*);
+			static int SDLCALL HandleEventWatch (void *userdata, SDL_Event *event);
 
 			static SDLApplication* currentApplication;
 
@@ -63,14 +64,14 @@ namespace lime {
 			bool newFrameGeneration;
 			ApplicationEvent applicationEvent;
 			ClipboardEvent clipboardEvent;
-			Uint32 currentUpdate;
+			double currentUpdate;
 			double framePeriod;
 			Uint32 initFlags;
 			DropEvent dropEvent;
 			GamepadEvent gamepadEvent;
 			JoystickEvent joystickEvent;
 			KeyEvent keyEvent;
-			Uint32 lastUpdate;
+			double lastUpdate;
 			MouseEvent mouseEvent;
 			double nextUpdate;
 			OrientationEvent orientationEvent;

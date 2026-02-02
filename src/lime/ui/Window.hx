@@ -46,7 +46,6 @@ class Window
 	 * perform more quickly on displays with a higher refresh rate
 	**/
 	public var frameRate(get, set):Float;
-	public var newFrameGeneration(get, set):Bool;
 	public var drawFrameRate(get, set):Int;
 	public var isFullFrame(get, set):Bool;
 
@@ -172,7 +171,6 @@ class Window
 	@:noCompletion private var __maxWidth:Int = 0x7FFFFFFF;
 	@:noCompletion private var __maxHeight:Int = 0x7FFFFFFF;
 	@:noCompletion private var __splitUpdate:Bool = false;
-	@:noCompletion private var __newFrameGeneration:Bool = true;
 	@:noCompletion private var __drawFrameRate:Int;
 	@:noCompletion private var __isFullFrame:Bool;
 
@@ -604,17 +602,6 @@ class Window
 	@:noCompletion private inline function set_frameRate(value:Float):Float
 	{
 		return __backend.setFrameRate(value);
-	}
-
-	@:noCompletion private inline function get_newFrameGeneration():Bool
-	{
-		return __newFrameGeneration;
-	}
-
-	@:noCompletion private inline function set_newFrameGeneration(value:Bool):Bool
-	{
-		__newFrameGeneration = value;
-		return __backend.setNewFrameGeneration(value);
 	}
 
 	@:noCompletion private inline function get_isFullFrame():Bool

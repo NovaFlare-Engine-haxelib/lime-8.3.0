@@ -60,8 +60,6 @@ namespace lime {
 		SDL_LogSetPriority (SDL_LOG_CATEGORY_APPLICATION, SDL_LOG_PRIORITY_WARN);
 
 		currentApplication = this;
-		
-		newFrameGeneration = false;
 		framePeriod = 1000.0 / 60.0;
 
 		currentUpdate = 0;
@@ -157,56 +155,30 @@ namespace lime {
 			case SDL_USEREVENT:
 
 				if (!inBackground) {
-					if (newFrameGeneration) {
-						if (!hrInit) {
-							perfFreq = SDL_GetPerformanceFrequency ();
-							lastPerfCounter = SDL_GetPerformanceCounter ();
-							periodPerfTicks = (uint64_t)(framePeriod * (double)perfFreq / 1000.0);
-							nextPerfCounter = lastPerfCounter + periodPerfTicks;
-							hrInit = true;
-						}
-						uint64_t nowPerf = SDL_GetPerformanceCounter ();
-						double realDeltaTime = (double)(nowPerf - lastPerfCounter) * 1000.0 / (double)perfFreq;
-						const double MAX_DELTA_TIME = 10 * framePeriod;
-						if (realDeltaTime < 0) realDeltaTime = 0;
-						if (realDeltaTime > MAX_DELTA_TIME) realDeltaTime = MAX_DELTA_TIME;
-						accumulator += realDeltaTime;
-						if (accumulator >= framePeriod) {
-							lastPerfCounter = nowPerf;
-							lastUpdate = (double)nowPerf * 1000.0 / (double)perfFreq;
+					if (!hrInit) {
+						perfFreq = SDL_GetPerformanceFrequency ();
+						lastPerfCounter = SDL_GetPerformanceCounter ();
+						periodPerfTicks = (uint64_t)(framePeriod * (double)perfFreq / 1000.0);
+						nextPerfCounter = lastPerfCounter + periodPerfTicks;
+						hrInit = true;
+					}
+					uint64_t nowPerf = SDL_GetPerformanceCounter ();
+					double realDeltaTime = (double)(nowPerf - lastPerfCounter) * 1000.0 / (double)perfFreq;
+					const double MAX_DELTA_TIME = 10 * framePeriod;
+					if (realDeltaTime < 0) realDeltaTime = 0;
+					if (realDeltaTime > MAX_DELTA_TIME) realDeltaTime = MAX_DELTA_TIME;
+					accumulator += realDeltaTime;
+					if (accumulator >= framePeriod) {
+						lastPerfCounter = nowPerf;
+						lastUpdate = (double)nowPerf * 1000.0 / (double)perfFreq;
 
-							applicationEvent.type = UPDATE;
-							applicationEvent.deltaTime = realDeltaTime;
-							ApplicationEvent::Dispatch (&applicationEvent);
-							RenderEvent::Dispatch (&renderEvent);
-
-							accumulator -= framePeriod;
-							if (accumulator > framePeriod * 2) accumulator = 0;
-						}
-					} else {
-						if (!hrInit) {
-							perfFreq = SDL_GetPerformanceFrequency ();
-							lastPerfCounter = SDL_GetPerformanceCounter ();
-							hrInit = true;
-						}
-						
-						uint64_t nowPerf = SDL_GetPerformanceCounter ();
-						currentUpdate = (double)nowPerf * 1000.0 / (double)perfFreq;
-						
 						applicationEvent.type = UPDATE;
-						applicationEvent.deltaTime = currentUpdate - lastUpdate;
-						lastUpdate = currentUpdate;
-
-						nextUpdate += framePeriod;
-
-						while (nextUpdate <= currentUpdate) {
-
-							nextUpdate += framePeriod;
-
-						}
-
+						applicationEvent.deltaTime = realDeltaTime;
 						ApplicationEvent::Dispatch (&applicationEvent);
 						RenderEvent::Dispatch (&renderEvent);
+
+						accumulator -= framePeriod;
+						if (accumulator > framePeriod * 2) accumulator = 0;
 					}
 				}
 				
@@ -939,21 +911,6 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 	}
 
 
-	void SDLApplication::SetNewFrameGeneration (bool enabled) {
-
-		newFrameGeneration = enabled;
-		if (newFrameGeneration) {
-			perfFreq = SDL_GetPerformanceFrequency ();
-			lastPerfCounter = SDL_GetPerformanceCounter ();
-			periodPerfTicks = (uint64_t)(framePeriod * (double)perfFreq / 1000.0);
-			nextPerfCounter = lastPerfCounter + periodPerfTicks;
-			accumulator = 0.0;
-			hrInit = true;
-		}
-
-	}
-
-
 	static SDL_TimerID timerID = 0;
 	bool timerActive = false;
 	bool firstTime = true;
@@ -1023,13 +980,6 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 
 		#if defined (IPHONE) || defined (EMSCRIPTEN)
 
-			uint64_t nowPerf = SDL_GetPerformanceCounter ();
-			if (!hrInit) {
-				perfFreq = SDL_GetPerformanceFrequency ();
-				hrInit = true;
-			}
-			double nowMs = (double)nowPerf * 1000.0 / (double)perfFreq;
-
 			if (nowMs >= nextUpdate) {
 
 				event.type = SDL_USEREVENT;
@@ -1039,46 +989,20 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 			}
 
 		#else
-
-			if (newFrameGeneration) {
-				if (!hrInit) {
-					perfFreq = SDL_GetPerformanceFrequency ();
-					lastPerfCounter = SDL_GetPerformanceCounter ();
-					periodPerfTicks = (uint64_t)(framePeriod * (double)perfFreq / 1000.0);
-					nextPerfCounter = lastPerfCounter + periodPerfTicks;
-					hrInit = true;
-				}
-				uint64_t nowPerf = SDL_GetPerformanceCounter ();
-				if (nowPerf >= nextPerfCounter) {
-					SDL_Event ev;
-					ev.type = SDL_USEREVENT;
-					ev.user.code = 0;
-					ev.user.data1 = NULL;
-					ev.user.data2 = NULL;
-					
-					HandleEvent (&ev);
-					
-					nextPerfCounter += periodPerfTicks;
-					if (nextPerfCounter + periodPerfTicks < nowPerf) {
-						nextPerfCounter = nowPerf + periodPerfTicks;
-					}
-				} else {
-					LIME_PAUSE();
+			if (nowPerf >= nextPerfCounter) {
+				SDL_Event ev;
+				ev.type = SDL_USEREVENT;
+				ev.user.code = 0;
+				ev.user.data1 = NULL;
+				ev.user.data2 = NULL;
+				
+				HandleEvent (&ev);
+				
+				nextPerfCounter += periodPerfTicks;
+				if (nextPerfCounter + periodPerfTicks < nowPerf) {
+					nextPerfCounter = nowPerf + periodPerfTicks;
 				}
 			} else {
-				if (currentUpdate >= nextUpdate) {
-
-					if (timerActive) SDL_RemoveTimer (timerID);
-					OnTimer (0, 0);
-
-				} else if (!timerActive) {
-
-					timerActive = true;
-					Uint32 wait = (Uint32)(nextUpdate - currentUpdate);
-					if (wait > (Uint32)framePeriod) wait = (Uint32)framePeriod;
-					timerID = SDL_AddTimer (wait, OnTimer, 0);
-
-				}
 				LIME_PAUSE();
 			}
 		}

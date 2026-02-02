@@ -294,11 +294,6 @@ class AIRWindow extends FlashWindow
 		return value;
 	}
 
-	public override function setNewFrameGeneration(value:Bool):Bool
-	{
-		return value;
-	}
-
 	public override function setMaximized(value:Bool):Bool
 	{
 		if (nativeWindow != null)

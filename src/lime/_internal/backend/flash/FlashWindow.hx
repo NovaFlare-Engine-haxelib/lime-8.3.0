@@ -602,11 +602,6 @@ class FlashWindow
 		return value;
 	}
 
-	public function setNewFrameGeneration(value:Bool):Bool
-	{
-		return value;
-	}
-
 	public function setFullscreen(value:Bool):Bool
 	{
 		parent.stage.displayState = (value ? FULL_SCREEN_INTERACTIVE : NORMAL);

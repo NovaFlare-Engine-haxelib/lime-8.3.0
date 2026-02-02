@@ -634,18 +634,6 @@ class NativeWindow
 		return frameRate = value;
 	}
 
-	public function setNewFrameGeneration(value:Bool):Bool
-	{
-		if (handle != null)
-		{
-			#if (!macro && lime_cffi)
-			NativeCFFI.lime_application_set_new_frame_generation(parent.application.__backend.handle, value);
-			#end
-		}
-
-		return value;
-	}
-
 	public function setFullscreen(value:Bool):Bool
 	{
 		if (handle != null)

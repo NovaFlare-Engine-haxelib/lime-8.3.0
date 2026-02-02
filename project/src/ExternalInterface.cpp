@@ -361,23 +361,6 @@ namespace lime {
 
 	}
 
-
-	void lime_application_set_new_frame_generation (value application, bool enabled) {
-
-		Application* app = (Application*)val_data (application);
-		app->SetNewFrameGeneration (enabled);
-
-	}
-
-
-	HL_PRIM void HL_NAME(hl_application_set_new_frame_generation) (HL_CFFIPointer* application, bool enabled) {
-
-		Application* app = (Application*)application->ptr;
-		app->SetNewFrameGeneration (enabled);
-
-	}
-
-
 	bool lime_application_update (value application) {
 
 		Application* app = (Application*)val_data (application);
@@ -4151,7 +4134,6 @@ namespace lime {
 	DEFINE_PRIME1v (lime_application_init);
 	DEFINE_PRIME1 (lime_application_quit);
 	DEFINE_PRIME2v (lime_application_set_frame_rate);
-	DEFINE_PRIME2v (lime_application_set_new_frame_generation);
 	DEFINE_PRIME1 (lime_application_update);
 	DEFINE_PRIME2 (lime_audio_load);
 	DEFINE_PRIME2 (lime_audio_load_bytes);
@@ -4350,7 +4332,6 @@ namespace lime {
 	DEFINE_HL_PRIM (_VOID, hl_application_init, _TCFFIPOINTER);
 	DEFINE_HL_PRIM (_I32, hl_application_quit, _TCFFIPOINTER);
 	DEFINE_HL_PRIM (_VOID, hl_application_set_frame_rate, _TCFFIPOINTER _F64);
-	DEFINE_HL_PRIM (_VOID, hl_application_set_new_frame_generation, _TCFFIPOINTER _BOOL);
 	DEFINE_HL_PRIM (_BOOL, hl_application_update, _TCFFIPOINTER);
 	DEFINE_HL_PRIM (_TAUDIOBUFFER, hl_audio_load_bytes, _TBYTES _TAUDIOBUFFER);
 	DEFINE_HL_PRIM (_TAUDIOBUFFER, hl_audio_load_file, _STRING _TAUDIOBUFFER);

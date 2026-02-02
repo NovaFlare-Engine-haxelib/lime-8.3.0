@@ -34,7 +34,6 @@ namespace lime {
 			virtual void Init ();
 			virtual int Quit ();
 			virtual void SetFrameRate (double frameRate);
-			virtual void SetNewFrameGeneration (bool enabled);
 			virtual bool Update ();
 
 			void RegisterWindow (SDLWindow *window);
@@ -61,7 +60,6 @@ namespace lime {
 			static SDLApplication* currentApplication;
 
 			bool active;
-			bool newFrameGeneration;
 			ApplicationEvent applicationEvent;
 			ClipboardEvent clipboardEvent;
 			double currentUpdate;

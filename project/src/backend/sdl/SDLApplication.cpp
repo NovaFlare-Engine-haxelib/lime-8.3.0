@@ -1007,7 +1007,12 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 					nextPerfCounter = nowPerf + periodPerfTicks;
 				}
 			} else {
-				LIME_PAUSE();
+				uint64_t remainingTicks = nextPerfCounter - nowPerf;
+				if (remainingTicks > perfFreq / 500) {
+					SDL_Delay (1);
+				} else {
+					LIME_PAUSE();
+				}
 			}
 		}
 
@@ -1107,7 +1112,7 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 					if (!isBlocking) System::GCEnterBlocking ();
 					isBlocking = true;
 					LIME_PAUSE();
-					SDL_Delay (0);
+					SDL_Delay (1);
 					break;
 
 			}

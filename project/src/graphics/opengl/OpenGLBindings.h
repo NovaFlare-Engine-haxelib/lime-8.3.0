@@ -1,6 +1,7 @@
 #ifndef LIME_GRAPHICS_OPENGL_OPENGL_BINDINGS_H
 #define LIME_GRAPHICS_OPENGL_OPENGL_BINDINGS_H
 
+#include <graphics/RenderThread.h>
 
 namespace lime {
 
@@ -10,10 +11,14 @@ namespace lime {
 		public:
 
 			static bool Init ();
+			static void BindRenderThread (RenderThread* thread);
+			static void SetMultiThreaded (bool enabled);
 
 			static int defaultFramebuffer;
 			static int defaultRenderbuffer;
 			static void* handle;
+			static RenderThread* renderThread;
+			static bool isMultiThreaded;
 
 			#ifdef NATIVE_TOOLKIT_SDL_ANGLE
 			static void* eglHandle;

@@ -4,6 +4,7 @@
 
 #include <SDL.h>
 #include <graphics/ImageBuffer.h>
+#include <graphics/RenderThread.h>
 #include <ui/Cursor.h>
 #include <ui/Window.h>
 
@@ -64,6 +65,7 @@ namespace lime {
 			SDL_Renderer* sdlRenderer;
 			SDL_Texture* sdlTexture;
 			SDL_Window* sdlWindow;
+			RenderThread renderThread;
 
 		private:
 

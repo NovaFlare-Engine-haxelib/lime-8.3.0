@@ -47,7 +47,6 @@ class Window
 	**/
 	public var frameRate(get, set):Float;
 	public var drawFrameRate(get, set):Int;
-	public var isFullFrame(get, set):Bool;
 
 	public var fullscreen(get, set):Bool;
 	public var height(get, set):Int;
@@ -172,7 +171,6 @@ class Window
 	@:noCompletion private var __maxHeight:Int = 0x7FFFFFFF;
 	@:noCompletion private var __splitUpdate:Bool = false;
 	@:noCompletion private var __drawFrameRate:Int;
-	@:noCompletion private var __isFullFrame:Bool;
 
 	#if commonjs
 	private static function __init__()
@@ -604,16 +602,6 @@ class Window
 		return __backend.setFrameRate(value);
 	}
 
-	@:noCompletion private inline function get_isFullFrame():Bool
-	{
-		return __isFullFrame;
-	}
-
-	@:noCompletion private function set_isFullFrame(value:Bool):Bool
-	{
-		return __isFullFrame = value;
-	}
-
 	@:noCompletion private inline function get_fullscreen():Bool
 	{
 		return __fullscreen;
@@ -658,6 +646,7 @@ class Window
 
 	@:noCompletion private function set_splitUpdate(value:Bool):Bool
 	{
+		__backend.setSplitUpdate(value);
 		return __splitUpdate = value;
 	}
 
@@ -668,6 +657,7 @@ class Window
 
 	@:noCompletion private function set_drawFrameRate(value:Int):Int
 	{
+		__backend.setDrawFrameRate(value);
 		return __drawFrameRate = value;
 	}
 

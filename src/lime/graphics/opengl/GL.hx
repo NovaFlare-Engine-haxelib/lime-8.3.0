@@ -2557,6 +2557,11 @@ class GL
 	{
 		context.vertexAttribI4ui(index, v0, v1, v2, v3);
 	}
+	
+	public static inline function setMultiThreaded(enabled:Bool):Void
+	{
+		context.setMultiThreaded(enabled);
+	}
 
 	public static inline function vertexAttribI4uiv(index:Int, v:#if (!js || !html5 || doc_gen) DataPointer #else Dynamic #end):Void
 	{

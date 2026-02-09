@@ -634,6 +634,30 @@ class NativeWindow
 		return frameRate = value;
 	}
 
+	public function setSplitUpdate(value:Bool):Bool
+	{
+		if (handle != null)
+		{
+			#if (!macro && lime_cffi)
+			NativeCFFI.lime_application_set_split_update(parent.application.__backend.handle, value);
+			#end
+		}
+
+		return value;
+	}
+
+	public function setDrawFrameRate(value:Float):Float
+	{
+		if (handle != null)
+		{
+			#if (!macro && lime_cffi)
+			NativeCFFI.lime_application_set_render_frame_rate(parent.application.__backend.handle, value);
+			#end
+		}
+
+		return value;
+	}
+
 	public function setFullscreen(value:Bool):Bool
 	{
 		if (handle != null)

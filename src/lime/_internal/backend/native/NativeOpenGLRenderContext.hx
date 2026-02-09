@@ -2559,6 +2559,13 @@ class NativeOpenGLRenderContext
 		return false;
 		#end
 	}
+	
+	public function setMultiThreaded(enabled:Bool):Void
+	{
+		#if (lime_cffi && (lime_opengl || lime_opengles) && !macro)
+		NativeCFFI.lime_gl_set_multithreaded(enabled);
+		#end
+	}
 
 	public function isShader(shader:GLShader):Bool
 	{

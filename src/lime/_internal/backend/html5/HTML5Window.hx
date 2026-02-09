@@ -1125,6 +1125,11 @@ class HTML5Window
 		return value;
 	}
 
+	public function setDrawFrameRate(value:Float):Float
+	{
+		return value;
+	}
+
 	public function setFullscreen(value:Bool):Bool
 	{
 		if (value)

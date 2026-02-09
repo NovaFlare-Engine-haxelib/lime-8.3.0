@@ -31,6 +31,8 @@ namespace lime {
 
 
 	bool OpenGLBindings::initialized = false;
+	RenderThread* OpenGLBindings::renderThread = nullptr;
+	bool OpenGLBindings::isMultiThreaded = true;
 
 	int OpenGLBindings::defaultFramebuffer = 0;
 	int OpenGLBindings::defaultRenderbuffer = 0;
@@ -54,6 +56,19 @@ namespace lime {
 	std::vector<void*> gc_gl_ptr;
 	std::vector<GLObjectType> gc_gl_type;
 	Mutex gc_gl_mutex;
+
+
+	void OpenGLBindings::BindRenderThread (RenderThread* thread) {
+        // Force recompile
+		renderThread = thread;
+
+	}
+
+	void OpenGLBindings::SetMultiThreaded (bool enabled) {
+
+		isMultiThreaded = enabled;
+
+	}
 
 
 	void gc_gl_object (value object) {
@@ -204,28 +219,52 @@ namespace lime {
 
 	void lime_gl_active_texture (int texture) {
 
-		glActiveTexture (texture);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glActiveTexture (texture);
+			});
+		} else {
+			glActiveTexture (texture);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_active_texture) (int texture) {
 
-		glActiveTexture (texture);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glActiveTexture (texture);
+			});
+		} else {
+			glActiveTexture (texture);
+		}
 
 	}
 
 
 	void lime_gl_attach_shader (int program, int shader) {
 
-		glAttachShader (program, shader);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glAttachShader (program, shader);
+			});
+		} else {
+			glAttachShader (program, shader);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_attach_shader) (int program, int shader) {
 
-		glAttachShader (program, shader);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glAttachShader (program, shader);
+			});
+		} else {
+			glAttachShader (program, shader);
+		}
 
 	}
 
@@ -268,28 +307,54 @@ namespace lime {
 
 	void lime_gl_bind_attrib_location (int program, int index, HxString name) {
 
-		glBindAttribLocation (program, index, name.__s);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			std::string nameStr(name.__s);
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBindAttribLocation (program, index, nameStr.c_str());
+			});
+		} else {
+			glBindAttribLocation (program, index, name.__s);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_bind_attrib_location) (int program, int index, hl_vstring* name) {
 
-		glBindAttribLocation (program, index, name ? hl_to_utf8 (name->bytes) : NULL);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			std::string nameStr = name ? (char*)hl_to_utf8(name->bytes) : "";
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBindAttribLocation (program, index, nameStr.c_str());
+			});
+		} else {
+			glBindAttribLocation (program, index, name ? (char*)hl_to_utf8 (name->bytes) : NULL);
+		}
 
 	}
 
 
 	void lime_gl_bind_buffer (int target, int buffer) {
 
-		glBindBuffer (target, buffer);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBindBuffer (target, buffer);
+			});
+		} else {
+			glBindBuffer (target, buffer);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_bind_buffer) (int target, int buffer) {
 
-		glBindBuffer (target, buffer);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBindBuffer (target, buffer);
+			});
+		} else {
+			glBindBuffer (target, buffer);
+		}
 
 	}
 
@@ -297,7 +362,13 @@ namespace lime {
 	void lime_gl_bind_buffer_base (int target, int index, int buffer) {
 
 		#ifdef LIME_GLES3_API
-		glBindBufferBase (target, index, buffer);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBindBufferBase (target, index, buffer);
+			});
+		} else {
+			glBindBufferBase (target, index, buffer);
+		}
 		#endif
 
 	}
@@ -306,7 +377,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_bind_buffer_base) (int target, int index, int buffer) {
 
 		#ifdef LIME_GLES3_API
-		glBindBufferBase (target, index, buffer);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBindBufferBase (target, index, buffer);
+			});
+		} else {
+			glBindBufferBase (target, index, buffer);
+		}
 		#endif
 
 	}
@@ -315,9 +392,14 @@ namespace lime {
 	void lime_gl_bind_buffer_range (int target, int index, int buffer, double offset, int size) {
 
 		#ifdef LIME_GLES3_API
-		glBindBufferRange (target, index, buffer, (GLintptr)(uintptr_t)offset, size);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBindBufferRange (target, index, buffer, (GLintptr)(uintptr_t)offset, size);
+			});
+		} else {
+			glBindBufferRange (target, index, buffer, (GLintptr)(uintptr_t)offset, size);
+		}
 		#endif
-
 
 	}
 
@@ -325,9 +407,14 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_bind_buffer_range) (int target, int index, int buffer, double offset, int size) {
 
 		#ifdef LIME_GLES3_API
-		glBindBufferRange (target, index, buffer, (GLintptr)(uintptr_t)offset, size);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBindBufferRange (target, index, buffer, (GLintptr)(uintptr_t)offset, size);
+			});
+		} else {
+			glBindBufferRange (target, index, buffer, (GLintptr)(uintptr_t)offset, size);
+		}
 		#endif
-
 
 	}
 
@@ -335,12 +422,16 @@ namespace lime {
 	void lime_gl_bind_framebuffer (int target, int framebuffer) {
 
 		if (!framebuffer) {
-
 			framebuffer = OpenGLBindings::defaultFramebuffer;
-
 		}
 
-		glBindFramebuffer (target, framebuffer);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBindFramebuffer (target, framebuffer);
+			});
+		} else {
+			glBindFramebuffer (target, framebuffer);
+		}
 
 	}
 
@@ -348,12 +439,16 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_bind_framebuffer) (int target, int framebuffer) {
 
 		if (!framebuffer) {
-
 			framebuffer = OpenGLBindings::defaultFramebuffer;
-
 		}
 
-		glBindFramebuffer (target, framebuffer);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBindFramebuffer (target, framebuffer);
+			});
+		} else {
+			glBindFramebuffer (target, framebuffer);
+		}
 
 	}
 
@@ -366,7 +461,13 @@ namespace lime {
 
 		}
 
-		glBindRenderbuffer (target, renderbuffer);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBindRenderbuffer (target, renderbuffer);
+			});
+		} else {
+			glBindRenderbuffer (target, renderbuffer);
+		}
 
 	}
 
@@ -404,14 +505,26 @@ namespace lime {
 
 	void lime_gl_bind_texture (int target, int texture) {
 
-		glBindTexture (target, texture);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBindTexture (target, texture);
+			});
+		} else {
+			glBindTexture (target, texture);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_bind_texture) (int target, int texture) {
 
-		glBindTexture (target, texture);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBindTexture (target, texture);
+			});
+		} else {
+			glBindTexture (target, texture);
+		}
 
 	}
 
@@ -428,7 +541,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_bind_transform_feedback) (int target, int transformFeedback) {
 
 		#ifdef LIME_GLES3_API
-		glBindTransformFeedback (target, transformFeedback);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBindTransformFeedback (target, transformFeedback);
+			});
+		} else {
+			glBindTransformFeedback (target, transformFeedback);
+		}
 		#endif
 
 	}
@@ -437,7 +556,13 @@ namespace lime {
 	void lime_gl_bind_vertex_array (int vertexArray) {
 
 		#ifdef LIME_GLES3_API
-		glBindVertexArray (vertexArray);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBindVertexArray (vertexArray);
+			});
+		} else {
+			glBindVertexArray (vertexArray);
+		}
 		#endif
 
 	}
@@ -446,7 +571,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_bind_vertex_array) (int vertexArray) {
 
 		#ifdef LIME_GLES3_API
-		glBindVertexArray (vertexArray);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBindVertexArray (vertexArray);
+			});
+		} else {
+			glBindVertexArray (vertexArray);
+		}
 		#endif
 
 	}
@@ -454,70 +585,130 @@ namespace lime {
 
 	void lime_gl_blend_color (float r, float g, float b, float a) {
 
-		glBlendColor (r, g, b, a);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBlendColor (r, g, b, a);
+			});
+		} else {
+			glBlendColor (r, g, b, a);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_blend_color) (float r, float g, float b, float a) {
 
-		glBlendColor (r, g, b, a);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBlendColor (r, g, b, a);
+			});
+		} else {
+			glBlendColor (r, g, b, a);
+		}
 
 	}
 
 
 	void lime_gl_blend_equation (int mode) {
 
-		glBlendEquation (mode);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBlendEquation (mode);
+			});
+		} else {
+			glBlendEquation (mode);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_blend_equation) (int mode) {
 
-		glBlendEquation (mode);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBlendEquation (mode);
+			});
+		} else {
+			glBlendEquation (mode);
+		}
 
 	}
 
 
 	void lime_gl_blend_equation_separate (int rgb, int a) {
 
-		glBlendEquationSeparate (rgb, a);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBlendEquationSeparate (rgb, a);
+			});
+		} else {
+			glBlendEquationSeparate (rgb, a);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_blend_equation_separate) (int rgb, int a) {
 
-		glBlendEquationSeparate (rgb, a);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBlendEquationSeparate (rgb, a);
+			});
+		} else {
+			glBlendEquationSeparate (rgb, a);
+		}
 
 	}
 
 
 	void lime_gl_blend_func (int sfactor, int dfactor) {
 
-		glBlendFunc (sfactor, dfactor);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBlendFunc (sfactor, dfactor);
+			});
+		} else {
+			glBlendFunc (sfactor, dfactor);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_blend_func) (int sfactor, int dfactor) {
 
-		glBlendFunc (sfactor, dfactor);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBlendFunc (sfactor, dfactor);
+			});
+		} else {
+			glBlendFunc (sfactor, dfactor);
+		}
 
 	}
 
 
 	void lime_gl_blend_func_separate (int srcRGB, int destRGB, int srcAlpha, int destAlpha) {
 
-		glBlendFuncSeparate (srcRGB, destRGB, srcAlpha, destAlpha);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBlendFuncSeparate (srcRGB, destRGB, srcAlpha, destAlpha);
+			});
+		} else {
+			glBlendFuncSeparate (srcRGB, destRGB, srcAlpha, destAlpha);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_blend_func_separate) (int srcRGB, int destRGB, int srcAlpha, int destAlpha) {
 
-		glBlendFuncSeparate (srcRGB, destRGB, srcAlpha, destAlpha);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBlendFuncSeparate (srcRGB, destRGB, srcAlpha, destAlpha);
+			});
+		} else {
+			glBlendFuncSeparate (srcRGB, destRGB, srcAlpha, destAlpha);
+		}
 
 	}
 
@@ -542,58 +733,136 @@ namespace lime {
 
 	void lime_gl_buffer_data (int target, int size, double data, int usage) {
 
-		glBufferData (target, size, (void*)(uintptr_t)data, usage);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			void* dataCopy = nullptr;
+			if (data != 0) {
+				dataCopy = malloc(size);
+				memcpy(dataCopy, (void*)(uintptr_t)data, size);
+			}
+
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBufferData (target, size, dataCopy, usage);
+				if (dataCopy) free(dataCopy);
+			});
+		} else {
+			glBufferData (target, size, (void*)(uintptr_t)data, usage);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_buffer_data) (int target, int size, double data, int usage) {
 
-		glBufferData (target, size, (void*)(uintptr_t)data, usage);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			void* dataCopy = nullptr;
+			if (data != 0) {
+				dataCopy = malloc(size);
+				memcpy(dataCopy, (void*)(uintptr_t)data, size);
+			}
+
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBufferData (target, size, dataCopy, usage);
+				if (dataCopy) free(dataCopy);
+			});
+		} else {
+			glBufferData (target, size, (void*)(uintptr_t)data, usage);
+		}
 
 	}
 
 
 	void lime_gl_buffer_sub_data (int target, int offset, int size, double data) {
 
-		glBufferSubData (target, offset, size, (void*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			void* dataCopy = nullptr;
+			if (data != 0) {
+				dataCopy = malloc(size);
+				memcpy(dataCopy, (void*)(uintptr_t)data, size);
+			}
+
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBufferSubData (target, offset, size, dataCopy);
+				if (dataCopy) free(dataCopy);
+			});
+		} else {
+			glBufferSubData (target, offset, size, (void*)(uintptr_t)data);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_buffer_sub_data) (int target, int offset, int size, double data) {
 
-		glBufferSubData (target, offset, size, (void*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			void* dataCopy = nullptr;
+			if (data != 0) {
+				dataCopy = malloc(size);
+				memcpy(dataCopy, (void*)(uintptr_t)data, size);
+			}
+
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glBufferSubData (target, offset, size, dataCopy);
+				if (dataCopy) free(dataCopy);
+			});
+		} else {
+			glBufferSubData (target, offset, size, (void*)(uintptr_t)data);
+		}
 
 	}
 
 
 	int lime_gl_check_framebuffer_status (int target) {
 
-		return glCheckFramebufferStatus (target);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				return glCheckFramebufferStatus (target);
+			});
+		} else {
+			return glCheckFramebufferStatus (target);
+		}
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_check_framebuffer_status) (int target) {
 
-		return glCheckFramebufferStatus (target);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				return glCheckFramebufferStatus (target);
+			});
+		} else {
+			return glCheckFramebufferStatus (target);
+		}
 
 	}
 
 
 	void lime_gl_clear (int mask) {
 
-		gc_gl_run ();
-		glClear (mask);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				gc_gl_run ();
+				glClear (mask);
+			});
+		} else {
+			gc_gl_run ();
+			glClear (mask);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_clear) (int mask) {
 
-		gc_gl_run ();
-		glClear (mask);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				gc_gl_run ();
+				glClear (mask);
+			});
+		} else {
+			gc_gl_run ();
+			glClear (mask);
+		}
 
 	}
 
@@ -601,7 +870,13 @@ namespace lime {
 	void lime_gl_clear_bufferfi (int buffer, int drawBuffer, float depth, int stencil) {
 
 		#ifdef LIME_GLES3_API
-		glClearBufferfi (buffer, drawBuffer, depth, stencil);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glClearBufferfi (buffer, drawBuffer, depth, stencil);
+			});
+		} else {
+			glClearBufferfi (buffer, drawBuffer, depth, stencil);
+		}
 		#endif
 
 	}
@@ -619,7 +894,17 @@ namespace lime {
 	void lime_gl_clear_bufferfv (int buffer, int drawBuffer, double data) {
 
 		#ifdef LIME_GLES3_API
-		glClearBufferfv (buffer, drawBuffer, (GLfloat*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			GLfloat* dataCopy = new GLfloat[4];
+			memcpy(dataCopy, (void*)(uintptr_t)data, 4 * sizeof(GLfloat));
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glClearBufferfv (buffer, drawBuffer, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glClearBufferfv (buffer, drawBuffer, (GLfloat*)(uintptr_t)data);
+		}
 		#endif
 
 	}
@@ -637,7 +922,17 @@ namespace lime {
 	void lime_gl_clear_bufferiv (int buffer, int drawBuffer, double data) {
 
 		#ifdef LIME_GLES3_API
-		glClearBufferiv (buffer, drawBuffer, (GLint*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			GLint* dataCopy = new GLint[4];
+			memcpy(dataCopy, (void*)(uintptr_t)data, 4 * sizeof(GLint));
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glClearBufferiv (buffer, drawBuffer, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glClearBufferiv (buffer, drawBuffer, (GLint*)(uintptr_t)data);
+		}
 		#endif
 
 	}
@@ -655,7 +950,17 @@ namespace lime {
 	void lime_gl_clear_bufferuiv (int buffer, int drawBuffer, double data) {
 
 		#ifdef LIME_GLES3_API
-		glClearBufferuiv (buffer, drawBuffer, (GLuint*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			GLuint* dataCopy = new GLuint[4];
+			memcpy(dataCopy, (void*)(uintptr_t)data, 4 * sizeof(GLuint));
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glClearBufferuiv (buffer, drawBuffer, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glClearBufferuiv (buffer, drawBuffer, (GLuint*)(uintptr_t)data);
+		}
 		#endif
 
 	}
@@ -672,50 +977,94 @@ namespace lime {
 
 	void lime_gl_clear_color (float red, float green, float blue, float alpha) {
 
-		glClearColor (red, green, blue, alpha);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glClearColor (red, green, blue, alpha);
+			});
+		} else {
+			glClearColor (red, green, blue, alpha);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_clear_color) (float red, float green, float blue, float alpha) {
 
-		glClearColor (red, green, blue, alpha);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glClearColor (red, green, blue, alpha);
+			});
+		} else {
+			glClearColor (red, green, blue, alpha);
+		}
 
 	}
 
 
 	void lime_gl_clear_depthf (float depth) {
 
-		#ifdef LIME_GLES
-		glClearDepthf (depth);
-		#else
-		glClearDepth (depth);
-		#endif
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				#ifdef LIME_GLES
+				glClearDepthf (depth);
+				#else
+				glClearDepth (depth);
+				#endif
+			});
+		} else {
+			#ifdef LIME_GLES
+			glClearDepthf (depth);
+			#else
+			glClearDepth (depth);
+			#endif
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_clear_depthf) (float depth) {
 
-		#ifdef LIME_GLES
-		glClearDepthf (depth);
-		#else
-		glClearDepth (depth);
-		#endif
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				#ifdef LIME_GLES
+				glClearDepthf (depth);
+				#else
+				glClearDepth (depth);
+				#endif
+			});
+		} else {
+			#ifdef LIME_GLES
+			glClearDepthf (depth);
+			#else
+			glClearDepth (depth);
+			#endif
+		}
 
 	}
 
 
 	void lime_gl_clear_stencil (int stencil) {
 
-		glClearStencil (stencil);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glClearStencil (stencil);
+			});
+		} else {
+			glClearStencil (stencil);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_clear_stencil) (int stencil) {
 
-		glClearStencil (stencil);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glClearStencil (stencil);
+			});
+		} else {
+			glClearStencil (stencil);
+		}
 
 	}
 
@@ -735,8 +1084,15 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_client_wait_sync) (HL_CFFIPointer* sync, int flags, int timeoutA, int timeoutB) {
 
 		#ifdef LIME_GLES3_API
-		GLuint64 timeout = (GLuint64) timeoutA << 32 | timeoutB;
-		return glClientWaitSync ((GLsync)sync->ptr, flags, timeout);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([=] () {
+				GLuint64 timeout = (GLuint64) timeoutA << 32 | timeoutB;
+				return glClientWaitSync ((GLsync)sync->ptr, flags, timeout);
+			});
+		} else {
+			GLuint64 timeout = (GLuint64) timeoutA << 32 | timeoutB;
+			return glClientWaitSync ((GLsync)sync->ptr, flags, timeout);
+		}
 		#else
 		return 0;
 		#endif
@@ -746,42 +1102,111 @@ namespace lime {
 
 	void lime_gl_color_mask (bool red, bool green, bool blue, bool alpha) {
 
-		glColorMask (red, green, blue, alpha);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glColorMask (red, green, blue, alpha);
+			});
+		} else {
+			glColorMask (red, green, blue, alpha);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_color_mask) (bool red, bool green, bool blue, bool alpha) {
 
-		glColorMask (red, green, blue, alpha);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glColorMask (red, green, blue, alpha);
+			});
+		} else {
+			glColorMask (red, green, blue, alpha);
+		}
 
 	}
 
 
 	void lime_gl_compile_shader (int shader) {
 
-		glCompileShader (shader);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glCompileShader (shader);
+				GLint status;
+				glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
+				//printf("[GL] glCompileShader shader %d status: %d\n", shader, status);
+				if (status == 0) {
+					GLint logLen;
+					glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &logLen);
+					if (logLen > 0) {
+						char* log = new char[logLen];
+						glGetShaderInfoLog(shader, logLen, 0, log);
+						printf("[GL] Shader Compile Log: %s\n", log);
+						delete[] log;
+					}
+				}
+			});
+		} else {
+			glCompileShader (shader);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_compile_shader) (int shader) {
 
-		glCompileShader (shader);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glCompileShader (shader);
+				GLint status;
+				glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
+				if (status == 0) {
+					GLint logLen;
+					glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &logLen);
+					if (logLen > 0) {
+						char* log = new char[logLen];
+						glGetShaderInfoLog(shader, logLen, 0, log);
+						printf("[GL] Shader Compile Log: %s\n", log);
+						delete[] log;
+					}
+				}
+			});
+		} else {
+			glCompileShader (shader);
+		}
 
 	}
 
 
 	void lime_gl_compressed_tex_image_2d (int target, int level, int internalformat, int width, int height, int border, int imageSize, double data) {
 
-		glCompressedTexImage2D (target, level, internalformat, width, height, border, imageSize, (void*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			void* dataCopy = malloc(imageSize);
+			memcpy(dataCopy, (void*)(uintptr_t)data, imageSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glCompressedTexImage2D (target, level, internalformat, width, height, border, imageSize, dataCopy);
+				free(dataCopy);
+			});
+		} else {
+			glCompressedTexImage2D (target, level, internalformat, width, height, border, imageSize, (void*)(uintptr_t)data);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_compressed_tex_image_2d) (int target, int level, int internalformat, int width, int height, int border, int imageSize, double data) {
 
-		glCompressedTexImage2D (target, level, internalformat, width, height, border, imageSize, (void*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			void* dataCopy = malloc(imageSize);
+			memcpy(dataCopy, (void*)(uintptr_t)data, imageSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glCompressedTexImage2D (target, level, internalformat, width, height, border, imageSize, dataCopy);
+				free(dataCopy);
+			});
+		} else {
+			glCompressedTexImage2D (target, level, internalformat, width, height, border, imageSize, (void*)(uintptr_t)data);
+		}
 
 	}
 
@@ -789,7 +1214,17 @@ namespace lime {
 	void lime_gl_compressed_tex_image_3d (int target, int level, int internalformat, int width, int height, int depth, int border, int imageSize, double data) {
 
 		#ifdef LIME_GLES3_API
-		glCompressedTexImage3D (target, level, internalformat, width, height, depth, border, imageSize, (void*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			void* dataCopy = malloc(imageSize);
+			memcpy(dataCopy, (void*)(uintptr_t)data, imageSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glCompressedTexImage3D (target, level, internalformat, width, height, depth, border, imageSize, dataCopy);
+				free(dataCopy);
+			});
+		} else {
+			glCompressedTexImage3D (target, level, internalformat, width, height, depth, border, imageSize, (void*)(uintptr_t)data);
+		}
 		#endif
 
 	}
@@ -798,7 +1233,17 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_compressed_tex_image_3d) (int target, int level, int internalformat, int width, int height, int depth, int border, int imageSize, double data) {
 
 		#ifdef LIME_GLES3_API
-		glCompressedTexImage3D (target, level, internalformat, width, height, depth, border, imageSize, (void*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			void* dataCopy = malloc(imageSize);
+			memcpy(dataCopy, (void*)(uintptr_t)data, imageSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glCompressedTexImage3D (target, level, internalformat, width, height, depth, border, imageSize, dataCopy);
+				free(dataCopy);
+			});
+		} else {
+			glCompressedTexImage3D (target, level, internalformat, width, height, depth, border, imageSize, (void*)(uintptr_t)data);
+		}
 		#endif
 
 	}
@@ -806,14 +1251,34 @@ namespace lime {
 
 	void lime_gl_compressed_tex_sub_image_2d (int target, int level, int xoffset, int yoffset, int width, int height, int format, int imageSize, double data) {
 
-		glCompressedTexSubImage2D (target, level, xoffset, yoffset, width, height, format, imageSize, (void*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			void* dataCopy = malloc(imageSize);
+			memcpy(dataCopy, (void*)(uintptr_t)data, imageSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glCompressedTexSubImage2D (target, level, xoffset, yoffset, width, height, format, imageSize, dataCopy);
+				free(dataCopy);
+			});
+		} else {
+			glCompressedTexSubImage2D (target, level, xoffset, yoffset, width, height, format, imageSize, (void*)(uintptr_t)data);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_compressed_tex_sub_image_2d) (int target, int level, int xoffset, int yoffset, int width, int height, int format, int imageSize, double data) {
 
-		glCompressedTexSubImage2D (target, level, xoffset, yoffset, width, height, format, imageSize, (void*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			void* dataCopy = malloc(imageSize);
+			memcpy(dataCopy, (void*)(uintptr_t)data, imageSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glCompressedTexSubImage2D (target, level, xoffset, yoffset, width, height, format, imageSize, dataCopy);
+				free(dataCopy);
+			});
+		} else {
+			glCompressedTexSubImage2D (target, level, xoffset, yoffset, width, height, format, imageSize, (void*)(uintptr_t)data);
+		}
 
 	}
 
@@ -821,7 +1286,17 @@ namespace lime {
 	void lime_gl_compressed_tex_sub_image_3d (int target, int level, int xoffset, int yoffset, int zoffset, int width, int height, int depth, int format, int imageSize, double data) {
 
 		#ifdef LIME_GLES3_API
-		glCompressedTexSubImage3D (target, level, xoffset, yoffset, zoffset, width, height, depth, format, imageSize, (void*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			void* dataCopy = malloc(imageSize);
+			memcpy(dataCopy, (void*)(uintptr_t)data, imageSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glCompressedTexSubImage3D (target, level, xoffset, yoffset, zoffset, width, height, depth, format, imageSize, dataCopy);
+				free(dataCopy);
+			});
+		} else {
+			glCompressedTexSubImage3D (target, level, xoffset, yoffset, zoffset, width, height, depth, format, imageSize, (void*)(uintptr_t)data);
+		}
 		#endif
 
 	}
@@ -830,7 +1305,17 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_compressed_tex_sub_image_3d) (int target, int level, int xoffset, int yoffset, int zoffset, int width, int height, int depth, int format, int imageSize, double data) {
 
 		#ifdef LIME_GLES3_API
-		glCompressedTexSubImage3D (target, level, xoffset, yoffset, zoffset, width, height, depth, format, imageSize, (void*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			void* dataCopy = malloc(imageSize);
+			memcpy(dataCopy, (void*)(uintptr_t)data, imageSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glCompressedTexSubImage3D (target, level, xoffset, yoffset, zoffset, width, height, depth, format, imageSize, dataCopy);
+				free(dataCopy);
+			});
+		} else {
+			glCompressedTexSubImage3D (target, level, xoffset, yoffset, zoffset, width, height, depth, format, imageSize, (void*)(uintptr_t)data);
+		}
 		#endif
 
 	}
@@ -839,7 +1324,13 @@ namespace lime {
 	void lime_gl_copy_buffer_sub_data (int readTarget, int writeTarget, double readOffset, double writeOffset, int size) {
 
 		#ifdef LIME_GLES3_API
-		glCopyBufferSubData (readTarget, writeTarget, (GLintptr)(uintptr_t)readOffset, (GLintptr)(uintptr_t)writeOffset, size);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glCopyBufferSubData (readTarget, writeTarget, (GLintptr)(uintptr_t)readOffset, (GLintptr)(uintptr_t)writeOffset, size);
+			});
+		} else {
+			glCopyBufferSubData (readTarget, writeTarget, (GLintptr)(uintptr_t)readOffset, (GLintptr)(uintptr_t)writeOffset, size);
+		}
 		#endif
 
 	}
@@ -848,7 +1339,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_copy_buffer_sub_data) (int readTarget, int writeTarget, double readOffset, double writeOffset, int size) {
 
 		#ifdef LIME_GLES3_API
-		glCopyBufferSubData (readTarget, writeTarget, (GLintptr)(uintptr_t)readOffset, (GLintptr)(uintptr_t)writeOffset, size);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glCopyBufferSubData (readTarget, writeTarget, (GLintptr)(uintptr_t)readOffset, (GLintptr)(uintptr_t)writeOffset, size);
+			});
+		} else {
+			glCopyBufferSubData (readTarget, writeTarget, (GLintptr)(uintptr_t)readOffset, (GLintptr)(uintptr_t)writeOffset, size);
+		}
 		#endif
 
 	}
@@ -856,28 +1353,52 @@ namespace lime {
 
 	void lime_gl_copy_tex_image_2d (int target, int level, int internalformat, int x, int y, int width, int height, int border) {
 
-		glCopyTexImage2D (target, level, internalformat, x, y, width, height, border);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glCopyTexImage2D (target, level, internalformat, x, y, width, height, border);
+			});
+		} else {
+			glCopyTexImage2D (target, level, internalformat, x, y, width, height, border);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_copy_tex_image_2d) (int target, int level, int internalformat, int x, int y, int width, int height, int border) {
 
-		glCopyTexImage2D (target, level, internalformat, x, y, width, height, border);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glCopyTexImage2D (target, level, internalformat, x, y, width, height, border);
+			});
+		} else {
+			glCopyTexImage2D (target, level, internalformat, x, y, width, height, border);
+		}
 
 	}
 
 
 	void lime_gl_copy_tex_sub_image_2d (int target, int level, int xoffset, int yoffset, int x, int y, int width, int height) {
 
-		glCopyTexSubImage2D (target, level, xoffset, yoffset, x, y, width, height);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glCopyTexSubImage2D (target, level, xoffset, yoffset, x, y, width, height);
+			});
+		} else {
+			glCopyTexSubImage2D (target, level, xoffset, yoffset, x, y, width, height);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_copy_tex_sub_image_2d) (int target, int level, int xoffset, int yoffset, int x, int y, int width, int height) {
 
-		glCopyTexSubImage2D (target, level, xoffset, yoffset, x, y, width, height);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glCopyTexSubImage2D (target, level, xoffset, yoffset, x, y, width, height);
+			});
+		} else {
+			glCopyTexSubImage2D (target, level, xoffset, yoffset, x, y, width, height);
+		}
 
 	}
 
@@ -885,7 +1406,13 @@ namespace lime {
 	void lime_gl_copy_tex_sub_image_3d (int target, int level, int xoffset, int yoffset, int zoffset, int x, int y, int width, int height) {
 
 		#ifdef LIME_GLES3_API
-		glCopyTexSubImage3D (target, level, xoffset, yoffset, zoffset, x, y, width, height);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glCopyTexSubImage3D (target, level, xoffset, yoffset, zoffset, x, y, width, height);
+			});
+		} else {
+			glCopyTexSubImage3D (target, level, xoffset, yoffset, zoffset, x, y, width, height);
+		}
 		#endif
 
 	}
@@ -894,7 +1421,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_copy_tex_sub_image_3d) (int target, int level, int xoffset, int yoffset, int zoffset, int x, int y, int width, int height) {
 
 		#ifdef LIME_GLES3_API
-		glCopyTexSubImage3D (target, level, xoffset, yoffset, zoffset, x, y, width, height);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glCopyTexSubImage3D (target, level, xoffset, yoffset, zoffset, x, y, width, height);
+			});
+		} else {
+			glCopyTexSubImage3D (target, level, xoffset, yoffset, zoffset, x, y, width, height);
+		}
 		#endif
 
 	}
@@ -902,244 +1435,462 @@ namespace lime {
 
 	int lime_gl_create_buffer () {
 
-		GLuint id = 0;
-		glGenBuffers (1, &id);
-		return id;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+				GLuint id = 0;
+				glGenBuffers (1, &id);
+				return id;
+			});
+		} else {
+			GLuint id = 0;
+			glGenBuffers (1, &id);
+			return id;
+		}
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_create_buffer) () {
 
-		GLuint id = 0;
-		glGenBuffers (1, &id);
-		return id;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+				GLuint id = 0;
+				glGenBuffers (1, &id);
+				return id;
+			});
+		} else {
+			GLuint id = 0;
+			glGenBuffers (1, &id);
+			return id;
+		}
 
 	}
 
 
 	int lime_gl_create_framebuffer () {
 
-		GLuint id = 0;
-		glGenFramebuffers (1, &id);
-		return id;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+				GLuint id = 0;
+				glGenFramebuffers (1, &id);
+				return id;
+			});
+		} else {
+			GLuint id = 0;
+			glGenFramebuffers (1, &id);
+			return id;
+		}
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_create_framebuffer) () {
 
-		GLuint id = 0;
-		glGenFramebuffers (1, &id);
-		return id;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+				GLuint id = 0;
+				glGenFramebuffers (1, &id);
+				return id;
+			});
+		} else {
+			GLuint id = 0;
+			glGenFramebuffers (1, &id);
+			return id;
+		}
 
 	}
 
 
 	int lime_gl_create_program () {
 
-		return glCreateProgram ();
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+				int pid = glCreateProgram ();
+				//printf("[GL] glCreateProgram: %d\n", pid);
+				return pid;
+			});
+		} else {
+			return glCreateProgram ();
+		}
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_create_program) () {
 
-		return glCreateProgram ();
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+				return glCreateProgram ();
+			});
+		} else {
+			return glCreateProgram ();
+		}
 
 	}
 
 
 	int lime_gl_create_query () {
 
-		GLuint id = 0;
-		#ifdef LIME_GLES3_API
-		glGenQueries (1, &id);
-		#endif
-		return id;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+				GLuint id = 0;
+				#ifdef LIME_GLES3_API
+				glGenQueries (1, &id);
+				#endif
+				return id;
+			});
+		} else {
+			GLuint id = 0;
+			#ifdef LIME_GLES3_API
+			glGenQueries (1, &id);
+			#endif
+			return id;
+		}
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_create_query) () {
 
-		GLuint id = 0;
-		#ifdef LIME_GLES3_API
-		glGenQueries (1, &id);
-		#endif
-		return id;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+				GLuint id = 0;
+				#ifdef LIME_GLES3_API
+				glGenQueries (1, &id);
+				#endif
+				return id;
+			});
+		} else {
+			GLuint id = 0;
+			#ifdef LIME_GLES3_API
+			glGenQueries (1, &id);
+			#endif
+			return id;
+		}
 
 	}
 
 
 	int lime_gl_create_renderbuffer () {
 
-		GLuint id = 0;
-		glGenRenderbuffers (1, &id);
-		return id;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+				GLuint id = 0;
+				glGenRenderbuffers (1, &id);
+				return id;
+			});
+		} else {
+			GLuint id = 0;
+			glGenRenderbuffers (1, &id);
+			return id;
+		}
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_create_renderbuffer) () {
 
-		GLuint id = 0;
-		glGenRenderbuffers (1, &id);
-		return id;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+				GLuint id = 0;
+				glGenRenderbuffers (1, &id);
+				return id;
+			});
+		} else {
+			GLuint id = 0;
+			glGenRenderbuffers (1, &id);
+			return id;
+		}
 
 	}
 
 
 	int lime_gl_create_sampler () {
 
-		GLuint id = 0;
-		#ifdef LIME_GLES3_API
-		glGenSamplers (1, &id);
-		#endif
-		return id;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+				GLuint id = 0;
+				#ifdef LIME_GLES3_API
+				glGenSamplers (1, &id);
+				#endif
+				return id;
+			});
+		} else {
+			GLuint id = 0;
+			#ifdef LIME_GLES3_API
+			glGenSamplers (1, &id);
+			#endif
+			return id;
+		}
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_create_sampler) () {
 
-		GLuint id = 0;
-		#ifdef LIME_GLES3_API
-		glGenSamplers (1, &id);
-		#endif
-		return id;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+				GLuint id = 0;
+				#ifdef LIME_GLES3_API
+				glGenSamplers (1, &id);
+				#endif
+				return id;
+			});
+		} else {
+			GLuint id = 0;
+			#ifdef LIME_GLES3_API
+			glGenSamplers (1, &id);
+			#endif
+			return id;
+		}
 
 	}
 
 
 	int lime_gl_create_shader (int type) {
 
-		return glCreateShader (type);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([=] () {
+				return glCreateShader (type);
+			});
+		} else {
+			return glCreateShader (type);
+		}
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_create_shader) (int type) {
 
-		return glCreateShader (type);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([=] () {
+				return glCreateShader (type);
+			});
+		} else {
+			return glCreateShader (type);
+		}
 
 	}
 
 
 	int lime_gl_create_texture () {
 
-		GLuint id = 0;
-		glGenTextures (1, &id);
-		return id;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+				GLuint id = 0;
+				glGenTextures (1, &id);
+				return id;
+			});
+		} else {
+			GLuint id = 0;
+			glGenTextures (1, &id);
+			return id;
+		}
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_create_texture) () {
 
-		GLuint id = 0;
-		glGenTextures (1, &id);
-		return id;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+				GLuint id = 0;
+				glGenTextures (1, &id);
+				return id;
+			});
+		} else {
+			GLuint id = 0;
+			glGenTextures (1, &id);
+			return id;
+		}
 
 	}
 
 
 	int lime_gl_create_transform_feedback () {
 
-		GLuint id = 0;
-		#ifdef LIME_GLES3_API
-		glGenTransformFeedbacks (1, &id);
-		#endif
-		return id;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+				GLuint id = 0;
+				#ifdef LIME_GLES3_API
+				glGenTransformFeedbacks (1, &id);
+				#endif
+				return id;
+			});
+		} else {
+			GLuint id = 0;
+			#ifdef LIME_GLES3_API
+			glGenTransformFeedbacks (1, &id);
+			#endif
+			return id;
+		}
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_create_transform_feedback) () {
 
-		GLuint id = 0;
-		#ifdef LIME_GLES3_API
-		glGenTransformFeedbacks (1, &id);
-		#endif
-		return id;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+				GLuint id = 0;
+				#ifdef LIME_GLES3_API
+				glGenTransformFeedbacks (1, &id);
+				#endif
+				return id;
+			});
+		} else {
+			GLuint id = 0;
+			#ifdef LIME_GLES3_API
+			glGenTransformFeedbacks (1, &id);
+			#endif
+			return id;
+		}
 
 	}
 
 
 	int lime_gl_create_vertex_array () {
 
-		GLuint id = 0;
-		#ifdef LIME_GLES3_API
-		glGenVertexArrays (1, &id);
-		#endif
-		return id;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+				GLuint id = 0;
+				#ifdef LIME_GLES3_API
+				glGenVertexArrays (1, &id);
+				#endif
+				return id;
+			});
+		} else {
+			GLuint id = 0;
+			#ifdef LIME_GLES3_API
+			glGenVertexArrays (1, &id);
+			#endif
+			return id;
+		}
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_create_vertex_array) () {
 
-		GLuint id = 0;
-		#ifdef LIME_GLES3_API
-		glGenVertexArrays (1, &id);
-		#endif
-		return id;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+				GLuint id = 0;
+				#ifdef LIME_GLES3_API
+				glGenVertexArrays (1, &id);
+				#endif
+				return id;
+			});
+		} else {
+			GLuint id = 0;
+			#ifdef LIME_GLES3_API
+			glGenVertexArrays (1, &id);
+			#endif
+			return id;
+		}
 
 	}
 
 
 	void lime_gl_cull_face (int mode) {
 
-		glCullFace (mode);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glCullFace (mode);
+			});
+		} else {
+			glCullFace (mode);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_cull_face) (int mode) {
 
-		glCullFace (mode);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glCullFace (mode);
+			});
+		} else {
+			glCullFace (mode);
+		}
 
 	}
 
 
 	void lime_gl_delete_buffer (int buffer) {
 
-		glDeleteBuffers (1, (GLuint*)&buffer);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteBuffers (1, (GLuint*)&buffer);
+			});
+		} else {
+			glDeleteBuffers (1, (GLuint*)&buffer);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_delete_buffer) (int buffer) {
 
-		glDeleteBuffers (1, (GLuint*)&buffer);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteBuffers (1, (GLuint*)&buffer);
+			});
+		} else {
+			glDeleteBuffers (1, (GLuint*)&buffer);
+		}
 
 	}
 
 
 	void lime_gl_delete_framebuffer (int framebuffer) {
 
-		glDeleteFramebuffers (1, (GLuint*)&framebuffer);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteFramebuffers (1, (GLuint*)&framebuffer);
+			});
+		} else {
+			glDeleteFramebuffers (1, (GLuint*)&framebuffer);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_delete_framebuffer) (int framebuffer) {
 
-		glDeleteFramebuffers (1, (GLuint*)&framebuffer);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteFramebuffers (1, (GLuint*)&framebuffer);
+			});
+		} else {
+			glDeleteFramebuffers (1, (GLuint*)&framebuffer);
+		}
 
 	}
 
 
 	void lime_gl_delete_program (int program) {
 
-		glDeleteProgram (program);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteProgram (program);
+			});
+		} else {
+			glDeleteProgram (program);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_delete_program) (int program) {
 
-		glDeleteProgram (program);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteProgram (program);
+			});
+		} else {
+			glDeleteProgram (program);
+		}
 
 	}
 
@@ -1147,7 +1898,13 @@ namespace lime {
 	void lime_gl_delete_query (int query) {
 
 		#ifdef LIME_GLES3_API
-		glDeleteQueries (1, (GLuint*)&query);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteQueries (1, (GLuint*)&query);
+			});
+		} else {
+			glDeleteQueries (1, (GLuint*)&query);
+		}
 		#endif
 
 	}
@@ -1156,7 +1913,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_delete_query) (int query) {
 
 		#ifdef LIME_GLES3_API
-		glDeleteQueries (1, (GLuint*)&query);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteQueries (1, (GLuint*)&query);
+			});
+		} else {
+			glDeleteQueries (1, (GLuint*)&query);
+		}
 		#endif
 
 	}
@@ -1164,14 +1927,26 @@ namespace lime {
 
 	void lime_gl_delete_renderbuffer (int renderbuffer) {
 
-		glDeleteRenderbuffers (1, (GLuint*)&renderbuffer);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteRenderbuffers (1, (GLuint*)&renderbuffer);
+			});
+		} else {
+			glDeleteRenderbuffers (1, (GLuint*)&renderbuffer);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_delete_renderbuffer) (int renderbuffer) {
 
-		glDeleteRenderbuffers (1, (GLuint*)&renderbuffer);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteRenderbuffers (1, (GLuint*)&renderbuffer);
+			});
+		} else {
+			glDeleteRenderbuffers (1, (GLuint*)&renderbuffer);
+		}
 
 	}
 
@@ -1179,7 +1954,13 @@ namespace lime {
 	void lime_gl_delete_sampler (int sampler) {
 
 		#ifdef LIME_GLES3_API
-		glDeleteSamplers (1, (GLuint*)&sampler);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteSamplers (1, (GLuint*)&sampler);
+			});
+		} else {
+			glDeleteSamplers (1, (GLuint*)&sampler);
+		}
 		#endif
 
 	}
@@ -1188,7 +1969,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_delete_sampler) (int sampler) {
 
 		#ifdef LIME_GLES3_API
-		glDeleteSamplers (1, (GLuint*)&sampler);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteSamplers (1, (GLuint*)&sampler);
+			});
+		} else {
+			glDeleteSamplers (1, (GLuint*)&sampler);
+		}
 		#endif
 
 	}
@@ -1196,14 +1983,26 @@ namespace lime {
 
 	void lime_gl_delete_shader (int shader) {
 
-		glDeleteShader (shader);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteShader (shader);
+			});
+		} else {
+			glDeleteShader (shader);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_delete_shader) (int shader) {
 
-		glDeleteShader (shader);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteShader (shader);
+			});
+		} else {
+			glDeleteShader (shader);
+		}
 
 	}
 
@@ -1212,7 +2011,14 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (val_is_null (sync)) return;
-		glDeleteSync ((GLsync)val_data (sync));
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			GLsync s = (GLsync)val_data (sync);
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteSync (s);
+			});
+		} else {
+			glDeleteSync ((GLsync)val_data (sync));
+		}
 		#endif
 
 	}
@@ -1222,7 +2028,14 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (!sync) return;
-		glDeleteSync ((GLsync)sync->ptr);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			GLsync s = (GLsync)sync->ptr;
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteSync (s);
+			});
+		} else {
+			glDeleteSync ((GLsync)sync->ptr);
+		}
 		#endif
 
 	}
@@ -1230,14 +2043,26 @@ namespace lime {
 
 	void lime_gl_delete_texture (int texture) {
 
-		glDeleteTextures (1, (GLuint*)&texture);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteTextures (1, (GLuint*)&texture);
+			});
+		} else {
+			glDeleteTextures (1, (GLuint*)&texture);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_delete_texture) (int texture) {
 
-		glDeleteTextures (1, (GLuint*)&texture);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteTextures (1, (GLuint*)&texture);
+			});
+		} else {
+			glDeleteTextures (1, (GLuint*)&texture);
+		}
 
 	}
 
@@ -1245,7 +2070,13 @@ namespace lime {
 	void lime_gl_delete_transform_feedback (int transformFeedback) {
 
 		#ifdef LIME_GLES3_API
-		glDeleteTransformFeedbacks (1, (GLuint*)&transformFeedback);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteTransformFeedbacks (1, (GLuint*)&transformFeedback);
+			});
+		} else {
+			glDeleteTransformFeedbacks (1, (GLuint*)&transformFeedback);
+		}
 		#endif
 
 	}
@@ -1254,7 +2085,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_delete_transform_feedback) (int transformFeedback) {
 
 		#ifdef LIME_GLES3_API
-		glDeleteTransformFeedbacks (1, (GLuint*)&transformFeedback);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteTransformFeedbacks (1, (GLuint*)&transformFeedback);
+			});
+		} else {
+			glDeleteTransformFeedbacks (1, (GLuint*)&transformFeedback);
+		}
 		#endif
 
 	}
@@ -1263,7 +2100,13 @@ namespace lime {
 	void lime_gl_delete_vertex_array (int vertexArray) {
 
 		#ifdef LIME_GLES3_API
-		glDeleteVertexArrays (1, (GLuint*)&vertexArray);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteVertexArrays (1, (GLuint*)&vertexArray);
+			});
+		} else {
+			glDeleteVertexArrays (1, (GLuint*)&vertexArray);
+		}
 		#endif
 
 	}
@@ -1272,7 +2115,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_delete_vertex_array) (int vertexArray) {
 
 		#ifdef LIME_GLES3_API
-		glDeleteVertexArrays (1, (GLuint*)&vertexArray);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDeleteVertexArrays (1, (GLuint*)&vertexArray);
+			});
+		} else {
+			glDeleteVertexArrays (1, (GLuint*)&vertexArray);
+		}
 		#endif
 
 	}
@@ -1280,106 +2129,198 @@ namespace lime {
 
 	void lime_gl_depth_func (int func) {
 
-		glDepthFunc (func);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDepthFunc (func);
+			});
+		} else {
+			glDepthFunc (func);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_depth_func) (int func) {
 
-		glDepthFunc (func);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDepthFunc (func);
+			});
+		} else {
+			glDepthFunc (func);
+		}
 
 	}
 
 
 	void lime_gl_depth_mask (bool flag) {
 
-		glDepthMask (flag);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDepthMask (flag);
+			});
+		} else {
+			glDepthMask (flag);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_depth_mask) (bool flag) {
 
-		glDepthMask (flag);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDepthMask (flag);
+			});
+		} else {
+			glDepthMask (flag);
+		}
 
 	}
 
 
 	void lime_gl_depth_rangef (float zNear, float zFar) {
 
-		#ifdef LIME_GLES
-		glDepthRangef (zNear, zFar);
-		#else
-		glDepthRange (zNear, zFar);
-		#endif
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				#ifdef LIME_GLES
+				glDepthRangef (zNear, zFar);
+				#else
+				glDepthRange (zNear, zFar);
+				#endif
+			});
+		} else {
+			#ifdef LIME_GLES
+			glDepthRangef (zNear, zFar);
+			#else
+			glDepthRange (zNear, zFar);
+			#endif
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_depth_rangef) (float zNear, float zFar) {
 
-		#ifdef LIME_GLES
-		glDepthRangef (zNear, zFar);
-		#else
-		glDepthRange (zNear, zFar);
-		#endif
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				#ifdef LIME_GLES
+				glDepthRangef (zNear, zFar);
+				#else
+				glDepthRange (zNear, zFar);
+				#endif
+			});
+		} else {
+			#ifdef LIME_GLES
+			glDepthRangef (zNear, zFar);
+			#else
+			glDepthRange (zNear, zFar);
+			#endif
+		}
 
 	}
 
 
 	void lime_gl_detach_shader (int program, int shader) {
 
-		glDetachShader (program, shader);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDetachShader (program, shader);
+			});
+		} else {
+			glDetachShader (program, shader);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_detach_shader) (int program, int shader) {
 
-		glDetachShader (program, shader);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDetachShader (program, shader);
+			});
+		} else {
+			glDetachShader (program, shader);
+		}
 
 	}
 
 
 	void lime_gl_disable (int cap) {
 
-		glDisable (cap);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDisable (cap);
+			});
+		} else {
+			glDisable (cap);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_disable) (int cap) {
 
-		glDisable (cap);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDisable (cap);
+			});
+		} else {
+			glDisable (cap);
+		}
 
 	}
 
 
 	void lime_gl_disable_vertex_attrib_array (int index) {
 
-		glDisableVertexAttribArray (index);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDisableVertexAttribArray (index);
+			});
+		} else {
+			glDisableVertexAttribArray (index);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_disable_vertex_attrib_array) (int index) {
 
-		glDisableVertexAttribArray (index);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDisableVertexAttribArray (index);
+			});
+		} else {
+			glDisableVertexAttribArray (index);
+		}
 
 	}
 
 
 	void lime_gl_draw_arrays (int mode, int first, int count) {
 
-		glDrawArrays (mode, first, count);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDrawArrays (mode, first, count);
+			});
+		} else {
+			glDrawArrays (mode, first, count);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_draw_arrays) (int mode, int first, int count) {
 
-		glDrawArrays (mode, first, count);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDrawArrays (mode, first, count);
+			});
+		} else {
+			glDrawArrays (mode, first, count);
+		}
 
 	}
 
@@ -1387,7 +2328,13 @@ namespace lime {
 	void lime_gl_draw_arrays_instanced (int mode, int first, int count, int instanceCount) {
 
 		#ifdef LIME_GLES3_API
-		glDrawArraysInstanced (mode, first, count, instanceCount);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDrawArraysInstanced (mode, first, count, instanceCount);
+			});
+		} else {
+			glDrawArraysInstanced (mode, first, count, instanceCount);
+		}
 		#endif
 
 	}
@@ -1396,7 +2343,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_draw_arrays_instanced) (int mode, int first, int count, int instanceCount) {
 
 		#ifdef LIME_GLES3_API
-		glDrawArraysInstanced (mode, first, count, instanceCount);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDrawArraysInstanced (mode, first, count, instanceCount);
+			});
+		} else {
+			glDrawArraysInstanced (mode, first, count, instanceCount);
+		}
 		#endif
 
 	}
@@ -1406,15 +2359,23 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		GLsizei size = val_array_size (buffers);
-		GLenum *_buffers = (GLenum*)alloca (size * sizeof(GLenum));
+		GLenum *dataCopy = new GLenum[size];
 
 		for (int i = 0; i < size; i++) {
 
-			_buffers[i] = val_int (val_array_i (buffers, i));
+			dataCopy[i] = val_int (val_array_i (buffers, i));
 
 		}
 
-		glDrawBuffers (size, _buffers);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDrawBuffers (size, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glDrawBuffers (size, dataCopy);
+			delete[] dataCopy;
+		}
 		#endif
 
 	}
@@ -1423,8 +2384,19 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_draw_buffers) (hl_varray* buffers) {
 
 		#ifdef LIME_GLES3_API
-		GLsizei size = buffers->size;
-		glDrawBuffers (size, (GLenum*)hl_aptr (buffers, int));
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			GLsizei size = buffers->size;
+			GLenum* dataCopy = new GLenum[size];
+			memcpy(dataCopy, (GLenum*)hl_aptr (buffers, int), size * sizeof(GLenum));
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDrawBuffers (size, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			GLsizei size = buffers->size;
+			glDrawBuffers (size, (GLenum*)hl_aptr (buffers, int));
+		}
 		#endif
 
 	}
@@ -1432,14 +2404,26 @@ namespace lime {
 
 	void lime_gl_draw_elements (int mode, int count, int type, double offset) {
 
-		glDrawElements (mode, count, type, (void*)(uintptr_t)offset);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDrawElements (mode, count, type, (void*)(uintptr_t)offset);
+			});
+		} else {
+			glDrawElements (mode, count, type, (void*)(uintptr_t)offset);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_draw_elements) (int mode, int count, int type, double offset) {
 
-		glDrawElements (mode, count, type, (void*)(uintptr_t)offset);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDrawElements (mode, count, type, (void*)(uintptr_t)offset);
+			});
+		} else {
+			glDrawElements (mode, count, type, (void*)(uintptr_t)offset);
+		}
 
 	}
 
@@ -1447,7 +2431,13 @@ namespace lime {
 	void lime_gl_draw_elements_instanced (int mode, int count, int type, double offset, int instanceCount) {
 
 		#ifdef LIME_GLES3_API
-		glDrawElementsInstanced (mode, count, type, (void*)(uintptr_t)offset, instanceCount);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDrawElementsInstanced (mode, count, type, (void*)(uintptr_t)offset, instanceCount);
+			});
+		} else {
+			glDrawElementsInstanced (mode, count, type, (void*)(uintptr_t)offset, instanceCount);
+		}
 		#endif
 
 	}
@@ -1456,7 +2446,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_draw_elements_instanced) (int mode, int count, int type, double offset, int instanceCount) {
 
 		#ifdef LIME_GLES3_API
-		glDrawElementsInstanced (mode, count, type, (void*)(uintptr_t)offset, instanceCount);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDrawElementsInstanced (mode, count, type, (void*)(uintptr_t)offset, instanceCount);
+			});
+		} else {
+			glDrawElementsInstanced (mode, count, type, (void*)(uintptr_t)offset, instanceCount);
+		}
 		#endif
 
 	}
@@ -1465,7 +2461,13 @@ namespace lime {
 	void lime_gl_draw_range_elements (int mode, int start, int end, int count, int type, double offset) {
 
 		#ifdef LIME_GLES3_API
-		glDrawRangeElements (mode, start, end, count, type, (void*)(uintptr_t)offset);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDrawRangeElements (mode, start, end, count, type, (void*)(uintptr_t)offset);
+			});
+		} else {
+			glDrawRangeElements (mode, start, end, count, type, (void*)(uintptr_t)offset);
+		}
 		#endif
 
 	}
@@ -1474,7 +2476,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_draw_range_elements) (int mode, int start, int end, int count, int type, double offset) {
 
 		#ifdef LIME_GLES3_API
-		glDrawRangeElements (mode, start, end, count, type, (void*)(uintptr_t)offset);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glDrawRangeElements (mode, start, end, count, type, (void*)(uintptr_t)offset);
+			});
+		} else {
+			glDrawRangeElements (mode, start, end, count, type, (void*)(uintptr_t)offset);
+		}
 		#endif
 
 	}
@@ -1482,28 +2490,52 @@ namespace lime {
 
 	void lime_gl_enable (int cap) {
 
-		glEnable (cap);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glEnable (cap);
+			});
+		} else {
+			glEnable (cap);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_enable) (int cap) {
 
-		glEnable (cap);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glEnable (cap);
+			});
+		} else {
+			glEnable (cap);
+		}
 
 	}
 
 
 	void lime_gl_enable_vertex_attrib_array (int index) {
 
-		glEnableVertexAttribArray (index);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glEnableVertexAttribArray (index);
+			});
+		} else {
+			glEnableVertexAttribArray (index);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_enable_vertex_attrib_array) (int index) {
 
-		glEnableVertexAttribArray (index);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glEnableVertexAttribArray (index);
+			});
+		} else {
+			glEnableVertexAttribArray (index);
+		}
 
 	}
 
@@ -1511,7 +2543,13 @@ namespace lime {
 	void lime_gl_end_query (int target) {
 
 		#ifdef LIME_GLES3_API
-		glEndQuery (target);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glEndQuery (target);
+			});
+		} else {
+			glEndQuery (target);
+		}
 		#endif
 
 	}
@@ -1520,7 +2558,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_end_query) (int target) {
 
 		#ifdef LIME_GLES3_API
-		glEndQuery (target);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glEndQuery (target);
+			});
+		} else {
+			glEndQuery (target);
+		}
 		#endif
 
 	}
@@ -1529,7 +2573,13 @@ namespace lime {
 	void lime_gl_end_transform_feedback () {
 
 		#ifdef LIME_GLES3_API
-		glEndTransformFeedback ();
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glEndTransformFeedback ();
+			});
+		} else {
+			glEndTransformFeedback ();
+		}
 		#endif
 
 	}
@@ -1538,7 +2588,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_end_transform_feedback) () {
 
 		#ifdef LIME_GLES3_API
-		glEndTransformFeedback ();
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glEndTransformFeedback ();
+			});
+		} else {
+			glEndTransformFeedback ();
+		}
 		#endif
 
 	}
@@ -1547,10 +2603,19 @@ namespace lime {
 	value lime_gl_fence_sync (int condition, int flags) {
 
 		#ifdef LIME_GLES3_API
-		GLsync result = glFenceSync (condition, flags);
-		value handle = CFFIPointer (result, gc_gl_object);
-		glObjectPtrs[handle] = result;
-		return handle;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<value>([=] () {
+				GLsync result = glFenceSync (condition, flags);
+				value handle = CFFIPointer (result, gc_gl_object);
+				glObjectPtrs[handle] = result;
+				return handle;
+			});
+		} else {
+			GLsync result = glFenceSync (condition, flags);
+			value handle = CFFIPointer (result, gc_gl_object);
+			glObjectPtrs[handle] = result;
+			return handle;
+		}
 		#else
 		return alloc_null ();
 		#endif
@@ -1561,10 +2626,19 @@ namespace lime {
 	HL_PRIM HL_CFFIPointer* HL_NAME(hl_gl_fence_sync) (int condition, int flags) {
 
 		#ifdef LIME_GLES3_API
-		GLsync result = glFenceSync (condition, flags);
-		HL_CFFIPointer* handle = HLCFFIPointer (result, (hl_finalizer)gc_gl_object);
-		glObjectPtrs[handle] = result;
-		return handle;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<HL_CFFIPointer*>([=] () {
+				GLsync result = glFenceSync (condition, flags);
+				HL_CFFIPointer* handle = HLCFFIPointer (result, (hl_finalizer)gc_gl_object);
+				glObjectPtrs[handle] = result;
+				return handle;
+			});
+		} else {
+			GLsync result = glFenceSync (condition, flags);
+			HL_CFFIPointer* handle = HLCFFIPointer (result, (hl_finalizer)gc_gl_object);
+			glObjectPtrs[handle] = result;
+			return handle;
+		}
 		#else
 		return NULL;
 		#endif
@@ -1574,56 +2648,104 @@ namespace lime {
 
 	void lime_gl_finish () {
 
-		glFinish ();
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glFinish ();
+			});
+		} else {
+			glFinish ();
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_finish) () {
 
-		glFinish ();
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glFinish ();
+			});
+		} else {
+			glFinish ();
+		}
 
 	}
 
 
 	void lime_gl_flush () {
 
-		glFlush ();
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glFlush ();
+			});
+		} else {
+			glFlush ();
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_flush) () {
 
-		glFlush ();
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glFlush ();
+			});
+		} else {
+			glFlush ();
+		}
 
 	}
 
 
 	void lime_gl_framebuffer_renderbuffer (int target, int attachment, int renderbuffertarget, int renderbuffer) {
 
-		glFramebufferRenderbuffer (target, attachment, renderbuffertarget, renderbuffer);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glFramebufferRenderbuffer (target, attachment, renderbuffertarget, renderbuffer);
+			});
+		} else {
+			glFramebufferRenderbuffer (target, attachment, renderbuffertarget, renderbuffer);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_framebuffer_renderbuffer) (int target, int attachment, int renderbuffertarget, int renderbuffer) {
 
-		glFramebufferRenderbuffer (target, attachment, renderbuffertarget, renderbuffer);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glFramebufferRenderbuffer (target, attachment, renderbuffertarget, renderbuffer);
+			});
+		} else {
+			glFramebufferRenderbuffer (target, attachment, renderbuffertarget, renderbuffer);
+		}
 
 	}
 
 
 	void lime_gl_framebuffer_texture2D (int target, int attachment, int textarget, int texture, int level) {
 
-		glFramebufferTexture2D (target, attachment, textarget, texture, level);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glFramebufferTexture2D (target, attachment, textarget, texture, level);
+			});
+		} else {
+			glFramebufferTexture2D (target, attachment, textarget, texture, level);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_framebuffer_texture2D) (int target, int attachment, int textarget, int texture, int level) {
 
-		glFramebufferTexture2D (target, attachment, textarget, texture, level);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glFramebufferTexture2D (target, attachment, textarget, texture, level);
+			});
+		} else {
+			glFramebufferTexture2D (target, attachment, textarget, texture, level);
+		}
 
 	}
 
@@ -1631,7 +2753,13 @@ namespace lime {
 	void lime_gl_framebuffer_texture_layer (int target, int attachment, int texture, int level, int layer) {
 
 		#ifdef LIME_GLES3_API
-		glFramebufferTextureLayer (target, attachment, texture, level, layer);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glFramebufferTextureLayer (target, attachment, texture, level, layer);
+			});
+		} else {
+			glFramebufferTextureLayer (target, attachment, texture, level, layer);
+		}
 		#endif
 
 	}
@@ -1640,7 +2768,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_framebuffer_texture_layer) (int target, int attachment, int texture, int level, int layer) {
 
 		#ifdef LIME_GLES3_API
-		glFramebufferTextureLayer (target, attachment, texture, level, layer);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glFramebufferTextureLayer (target, attachment, texture, level, layer);
+			});
+		} else {
+			glFramebufferTextureLayer (target, attachment, texture, level, layer);
+		}
 		#endif
 
 	}
@@ -1648,147 +2782,313 @@ namespace lime {
 
 	void lime_gl_front_face (int face) {
 
-		glFrontFace (face);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glFrontFace (face);
+			});
+		} else {
+			glFrontFace (face);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_front_face) (int face) {
 
-		glFrontFace (face);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glFrontFace (face);
+			});
+		} else {
+			glFrontFace (face);
+		}
 
 	}
 
 
 	void lime_gl_generate_mipmap (int target) {
 
-		glGenerateMipmap (target);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glGenerateMipmap (target);
+			});
+		} else {
+			glGenerateMipmap (target);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_generate_mipmap) (int target) {
 
-		glGenerateMipmap (target);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glGenerateMipmap (target);
+			});
+		} else {
+			glGenerateMipmap (target);
+		}
 
 	}
 
 
 	value lime_gl_get_active_attrib (int program, int index) {
 
-		value result = alloc_empty_object ();
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			struct AttribInfo {
+				GLsizei size;
+				GLenum type;
+				std::string name;
+			};
 
-		std::string buffer (GL_ACTIVE_ATTRIBUTE_MAX_LENGTH, 0);
-		GLsizei outLen = 0;
-		GLsizei size = 0;
-		GLenum type = 0;
+			AttribInfo info = OpenGLBindings::renderThread->RunCommandAndWait<AttribInfo>([=] () {
+				std::string buffer (GL_ACTIVE_ATTRIBUTE_MAX_LENGTH, 0);
+				GLsizei outLen = 0;
+				GLsizei size = 0;
+				GLenum type = 0;
 
-		glGetActiveAttrib (program, index, GL_ACTIVE_ATTRIBUTE_MAX_LENGTH, &outLen, &size, &type, &buffer[0]);
+				glGetActiveAttrib (program, index, GL_ACTIVE_ATTRIBUTE_MAX_LENGTH, &outLen, &size, &type, &buffer[0]);
+				buffer.resize (outLen);
+				
+				return AttribInfo{size, type, buffer};
+			});
 
-		buffer.resize (outLen);
+			value result = alloc_empty_object ();
+			alloc_field (result, val_id ("size"), alloc_int (info.size));
+			alloc_field (result, val_id ("type"), alloc_int (info.type));
+			alloc_field (result, val_id ("name"), alloc_string (info.name.c_str ()));
+			return result;
 
-		alloc_field (result, val_id ("size"), alloc_int (size));
-		alloc_field (result, val_id ("type"), alloc_int (type));
-		alloc_field (result, val_id ("name"), alloc_string (buffer.c_str ()));
+		} else {
+			value result = alloc_empty_object ();
 
-		return result;
+			std::string buffer (GL_ACTIVE_ATTRIBUTE_MAX_LENGTH, 0);
+			GLsizei outLen = 0;
+			GLsizei size = 0;
+			GLenum type = 0;
+
+			glGetActiveAttrib (program, index, GL_ACTIVE_ATTRIBUTE_MAX_LENGTH, &outLen, &size, &type, &buffer[0]);
+
+			buffer.resize (outLen);
+
+			alloc_field (result, val_id ("size"), alloc_int (size));
+			alloc_field (result, val_id ("type"), alloc_int (type));
+			alloc_field (result, val_id ("name"), alloc_string (buffer.c_str ()));
+
+			return result;
+		}
 
 	}
 
 
 	HL_PRIM vdynamic* HL_NAME(hl_gl_get_active_attrib) (int program, int index) {
 
-		char buffer[GL_ACTIVE_ATTRIBUTE_MAX_LENGTH];
-		GLsizei outLen = 0;
-		GLsizei size = 0;
-		GLenum type = 0;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			struct AttribInfo {
+				GLsizei size;
+				GLenum type;
+				std::string name;
+			};
 
-		glGetActiveAttrib (program, index, GL_ACTIVE_ATTRIBUTE_MAX_LENGTH, &outLen, &size, &type, &buffer[0]);
+			AttribInfo info = OpenGLBindings::renderThread->RunCommandAndWait<AttribInfo>([=] () {
+				std::string buffer (GL_ACTIVE_ATTRIBUTE_MAX_LENGTH, 0);
+				GLsizei outLen = 0;
+				GLsizei size = 0;
+				GLenum type = 0;
 
-		char* _buffer = (char*)malloc (outLen + 1);
-		memcpy (_buffer, &buffer, outLen);
-		_buffer[outLen] = '\0';
+				glGetActiveAttrib (program, index, GL_ACTIVE_ATTRIBUTE_MAX_LENGTH, &outLen, &size, &type, &buffer[0]);
+				buffer.resize (outLen);
+				
+				return AttribInfo{size, type, buffer};
+			});
 
-		const int id_size = hl_hash_utf8 ("size");
-		const int id_type = hl_hash_utf8 ("type");
-		const int id_name = hl_hash_utf8 ("name");
+			char* _buffer = (char*)malloc (info.name.size() + 1);
+			memcpy (_buffer, info.name.c_str(), info.name.size() + 1);
 
-		vdynamic *result = (vdynamic*)hl_alloc_dynobj();
-		hl_dyn_seti (result, id_size, &hlt_i32, size);
-		hl_dyn_seti (result, id_type, &hlt_i32, type);
-		hl_dyn_setp (result, id_name, &hlt_bytes, _buffer);
+			const int id_size = hl_hash_utf8 ("size");
+			const int id_type = hl_hash_utf8 ("type");
+			const int id_name = hl_hash_utf8 ("name");
 
-		return result;
+			vdynamic *result = (vdynamic*)hl_alloc_dynobj();
+			hl_dyn_seti (result, id_size, &hlt_i32, info.size);
+			hl_dyn_seti (result, id_type, &hlt_i32, info.type);
+			hl_dyn_setp (result, id_name, &hlt_bytes, _buffer);
+
+			return result;
+
+		} else {
+			char buffer[GL_ACTIVE_ATTRIBUTE_MAX_LENGTH];
+			GLsizei outLen = 0;
+			GLsizei size = 0;
+			GLenum type = 0;
+
+			glGetActiveAttrib (program, index, GL_ACTIVE_ATTRIBUTE_MAX_LENGTH, &outLen, &size, &type, &buffer[0]);
+
+			char* _buffer = (char*)malloc (outLen + 1);
+			memcpy (_buffer, &buffer, outLen);
+			_buffer[outLen] = '\0';
+
+			const int id_size = hl_hash_utf8 ("size");
+			const int id_type = hl_hash_utf8 ("type");
+			const int id_name = hl_hash_utf8 ("name");
+
+			vdynamic *result = (vdynamic*)hl_alloc_dynobj();
+			hl_dyn_seti (result, id_size, &hlt_i32, size);
+			hl_dyn_seti (result, id_type, &hlt_i32, type);
+			hl_dyn_setp (result, id_name, &hlt_bytes, _buffer);
+
+			return result;
+		}
 
 	}
 
 
 	value lime_gl_get_active_uniform (int program, int index) {
 
-		std::string buffer (GL_ACTIVE_UNIFORM_MAX_LENGTH, 0);
-		GLsizei outLen = 0;
-		GLsizei size = 0;
-		GLenum  type = 0;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			struct UniformInfo {
+				GLsizei size;
+				GLenum type;
+				std::string name;
+			};
 
-		glGetActiveUniform (program, index, GL_ACTIVE_UNIFORM_MAX_LENGTH, &outLen, &size, &type, &buffer[0]);
+			UniformInfo info = OpenGLBindings::renderThread->RunCommandAndWait<UniformInfo>([=] () {
+				std::string buffer (GL_ACTIVE_UNIFORM_MAX_LENGTH, 0);
+				GLsizei outLen = 0;
+				GLsizei size = 0;
+				GLenum type = 0;
 
-		buffer.resize (outLen);
+				glGetActiveUniform (program, index, GL_ACTIVE_UNIFORM_MAX_LENGTH, &outLen, &size, &type, &buffer[0]);
+				buffer.resize (outLen);
+				
+				return UniformInfo{size, type, buffer};
+			});
 
-		value result = alloc_empty_object ();
-		alloc_field (result, val_id ("size"), alloc_int (size));
-		alloc_field (result, val_id ("type"), alloc_int (type));
-		alloc_field (result, val_id ("name"), alloc_string (buffer.c_str ()));
+			value result = alloc_empty_object ();
+			alloc_field (result, val_id ("size"), alloc_int (info.size));
+			alloc_field (result, val_id ("type"), alloc_int (info.type));
+			alloc_field (result, val_id ("name"), alloc_string (info.name.c_str ()));
+			return result;
+		} else {
+			std::string buffer (GL_ACTIVE_UNIFORM_MAX_LENGTH, 0);
+			GLsizei outLen = 0;
+			GLsizei size = 0;
+			GLenum  type = 0;
 
-		return result;
+			glGetActiveUniform (program, index, GL_ACTIVE_UNIFORM_MAX_LENGTH, &outLen, &size, &type, &buffer[0]);
+
+			buffer.resize (outLen);
+
+			value result = alloc_empty_object ();
+			alloc_field (result, val_id ("size"), alloc_int (size));
+			alloc_field (result, val_id ("type"), alloc_int (type));
+			alloc_field (result, val_id ("name"), alloc_string (buffer.c_str ()));
+
+			return result;
+		}
 
 	}
 
 
 	HL_PRIM vdynamic* HL_NAME(hl_gl_get_active_uniform) (int program, int index) {
 
-		char* buffer[GL_ACTIVE_UNIFORM_MAX_LENGTH];
-		GLsizei outLen = 0;
-		GLsizei size = 0;
-		GLenum type = 0;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			struct UniformInfo {
+				GLsizei size;
+				GLenum type;
+				std::string name;
+			};
 
-		glGetActiveUniform (program, index, GL_ACTIVE_UNIFORM_MAX_LENGTH, &outLen, &size, &type, (GLchar*)&buffer);
+			UniformInfo info = OpenGLBindings::renderThread->RunCommandAndWait<UniformInfo>([=] () {
+				std::string buffer (GL_ACTIVE_UNIFORM_MAX_LENGTH, 0);
+				GLsizei outLen = 0;
+				GLsizei size = 0;
+				GLenum type = 0;
 
-		char* _buffer = (char*)malloc (outLen + 1);
-		memcpy (_buffer, &buffer, outLen);
-		_buffer[outLen] = '\0';
+				glGetActiveUniform (program, index, GL_ACTIVE_UNIFORM_MAX_LENGTH, &outLen, &size, &type, &buffer[0]);
+				buffer.resize (outLen);
+				
+				return UniformInfo{size, type, buffer};
+			});
 
-		const int id_size = hl_hash_utf8 ("size");
-		const int id_type = hl_hash_utf8 ("type");
-		const int id_name = hl_hash_utf8 ("name");
+			char* _buffer = (char*)malloc (info.name.size() + 1);
+			memcpy (_buffer, info.name.c_str(), info.name.size() + 1);
 
-		vdynamic *result = (vdynamic*)hl_alloc_dynobj();
-		hl_dyn_seti (result, id_size, &hlt_i32, size);
-		hl_dyn_seti (result, id_type, &hlt_i32, type);
-		hl_dyn_setp (result, id_name, &hlt_bytes, _buffer);
+			const int id_size = hl_hash_utf8 ("size");
+			const int id_type = hl_hash_utf8 ("type");
+			const int id_name = hl_hash_utf8 ("name");
 
-		return result;
+			vdynamic *result = (vdynamic*)hl_alloc_dynobj();
+			hl_dyn_seti (result, id_size, &hlt_i32, info.size);
+			hl_dyn_seti (result, id_type, &hlt_i32, info.type);
+			hl_dyn_setp (result, id_name, &hlt_bytes, _buffer);
+
+			return result;
+		} else {
+			char* buffer[GL_ACTIVE_UNIFORM_MAX_LENGTH];
+			GLsizei outLen = 0;
+			GLsizei size = 0;
+			GLenum type = 0;
+
+			glGetActiveUniform (program, index, GL_ACTIVE_UNIFORM_MAX_LENGTH, &outLen, &size, &type, (GLchar*)&buffer);
+
+			char* _buffer = (char*)malloc (outLen + 1);
+			memcpy (_buffer, &buffer, outLen);
+			_buffer[outLen] = '\0';
+
+			const int id_size = hl_hash_utf8 ("size");
+			const int id_type = hl_hash_utf8 ("type");
+			const int id_name = hl_hash_utf8 ("name");
+
+			vdynamic *result = (vdynamic*)hl_alloc_dynobj();
+			hl_dyn_seti (result, id_size, &hlt_i32, size);
+			hl_dyn_seti (result, id_type, &hlt_i32, type);
+			hl_dyn_setp (result, id_name, &hlt_bytes, _buffer);
+
+			return result;
+		}
 
 	}
 
 
 	int lime_gl_get_active_uniform_blocki (int program, int uniformBlockIndex, int pname) {
 
-		GLint param = 0;
 		#ifdef LIME_GLES3_API
-		glGetActiveUniformBlockiv (program, uniformBlockIndex, pname, &param);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				GLint param = 0;
+				glGetActiveUniformBlockiv (program, uniformBlockIndex, pname, &param);
+				return (int)param;
+			});
+		} else {
+			GLint param = 0;
+			glGetActiveUniformBlockiv (program, uniformBlockIndex, pname, &param);
+			return param;
+		}
+		#else
+		return 0;
 		#endif
-		return param;
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_get_active_uniform_blocki) (int program, int uniformBlockIndex, int pname) {
 
-		GLint param = 0;
 		#ifdef LIME_GLES3_API
-		glGetActiveUniformBlockiv (program, uniformBlockIndex, pname, &param);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				GLint param = 0;
+				glGetActiveUniformBlockiv (program, uniformBlockIndex, pname, &param);
+				return (int)param;
+			});
+		} else {
+			GLint param = 0;
+			glGetActiveUniformBlockiv (program, uniformBlockIndex, pname, &param);
+			return param;
+		}
+		#else
+		return 0;
 		#endif
-		return param;
 
 	}
 
@@ -1796,7 +3096,13 @@ namespace lime {
 	void lime_gl_get_active_uniform_blockiv (int program, int uniformBlockIndex, int pname, double params) {
 
 		#ifdef LIME_GLES3_API
-		glGetActiveUniformBlockiv (program, uniformBlockIndex, pname, (GLint*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetActiveUniformBlockiv (program, uniformBlockIndex, pname, (GLint*)(uintptr_t)params);
+			});
+		} else {
+			glGetActiveUniformBlockiv (program, uniformBlockIndex, pname, (GLint*)(uintptr_t)params);
+		}
 		#endif
 
 	}
@@ -1805,7 +3111,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_get_active_uniform_blockiv) (int program, int uniformBlockIndex, int pname, double params) {
 
 		#ifdef LIME_GLES3_API
-		glGetActiveUniformBlockiv (program, uniformBlockIndex, pname, (GLint*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetActiveUniformBlockiv (program, uniformBlockIndex, pname, (GLint*)(uintptr_t)params);
+			});
+		} else {
+			glGetActiveUniformBlockiv (program, uniformBlockIndex, pname, (GLint*)(uintptr_t)params);
+		}
 		#endif
 
 	}
@@ -1814,14 +3126,27 @@ namespace lime {
 	value lime_gl_get_active_uniform_block_name (int program, int uniformBlockIndex) {
 
 		#ifdef LIME_GLES3_API
-		GLint length;
-		glGetActiveUniformBlockiv (program, uniformBlockIndex, GL_UNIFORM_BLOCK_NAME_LENGTH, &length);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<value>([=] () {
+				GLint length;
+				glGetActiveUniformBlockiv (program, uniformBlockIndex, GL_UNIFORM_BLOCK_NAME_LENGTH, &length);
 
-		std::string buffer (length, 0);
+				std::string buffer (length, 0);
 
-		glGetActiveUniformBlockName (program, uniformBlockIndex, length, 0, &buffer[0]);
+				glGetActiveUniformBlockName (program, uniformBlockIndex, length, 0, &buffer[0]);
 
-		return alloc_string (buffer.c_str ());
+				return alloc_string (buffer.c_str ());
+			});
+		} else {
+			GLint length;
+			glGetActiveUniformBlockiv (program, uniformBlockIndex, GL_UNIFORM_BLOCK_NAME_LENGTH, &length);
+
+			std::string buffer (length, 0);
+
+			glGetActiveUniformBlockName (program, uniformBlockIndex, length, 0, &buffer[0]);
+
+			return alloc_string (buffer.c_str ());
+		}
 		#else
 		return alloc_null ();
 		#endif
@@ -1869,8 +3194,20 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_get_active_uniformsiv) (int program, hl_varray* uniformIndices, int pname, double params) {
 
 		#ifdef LIME_GLES3_API
-		GLsizei size = uniformIndices->size;
-		glGetActiveUniformsiv (program, size, (GLenum*)hl_aptr (uniformIndices, int), pname, (GLint*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			GLsizei size = uniformIndices->size;
+			GLenum *indicesCopy = new GLenum[size];
+			GLenum *src = (GLenum*)hl_aptr (uniformIndices, int);
+			for(int i=0; i<size; i++) indicesCopy[i] = src[i];
+
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetActiveUniformsiv (program, size, indicesCopy, pname, (GLint*)(uintptr_t)params);
+				delete[] indicesCopy;
+			});
+		} else {
+			GLsizei size = uniformIndices->size;
+			glGetActiveUniformsiv (program, size, (GLenum*)hl_aptr (uniformIndices, int), pname, (GLint*)(uintptr_t)params);
+		}
 		#endif
 
 	}
@@ -1929,46 +3266,88 @@ namespace lime {
 
 	int lime_gl_get_attrib_location (int program, HxString name) {
 
-		return glGetAttribLocation (program, name.__s);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			std::string nameStr(name.__s);
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				return glGetAttribLocation (program, nameStr.c_str());
+			});
+		} else {
+			return glGetAttribLocation (program, name.__s);
+		}
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_get_attrib_location) (int program, hl_vstring* name) {
 
-		return glGetAttribLocation (program, name ? hl_to_utf8 (name->bytes) : NULL);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			std::string nameStr = name ? (char*)hl_to_utf8(name->bytes) : "";
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				return glGetAttribLocation (program, nameStr.c_str());
+			});
+		} else {
+			return glGetAttribLocation (program, name ? (char*)hl_to_utf8 (name->bytes) : NULL);
+		}
 
 	}
 
 
 	bool lime_gl_get_boolean (int pname) {
 
-		unsigned char params;
-		glGetBooleanv (pname, &params);
-		return params;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<bool>([=] () {
+				GLboolean params = 0;
+				glGetBooleanv (pname, &params);
+				return (bool)params;
+			});
+		} else {
+			GLboolean params = 0;
+			glGetBooleanv (pname, &params);
+			return params;
+		}
 
 	}
 
 
 	HL_PRIM bool HL_NAME(hl_gl_get_boolean) (int pname) {
 
-		unsigned char params;
-		glGetBooleanv (pname, &params);
-		return params;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<bool>([=] () {
+				unsigned char params;
+				glGetBooleanv (pname, &params);
+				return params;
+			});
+		} else {
+			unsigned char params;
+			glGetBooleanv (pname, &params);
+			return params;
+		}
 
 	}
 
 
 	void lime_gl_get_booleanv (int pname, double params) {
 
-		glGetBooleanv (pname, (unsigned char*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetBooleanv (pname, (GLboolean*)(uintptr_t)params);
+			});
+		} else {
+			glGetBooleanv (pname, (GLboolean*)(uintptr_t)params);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_get_booleanv) (int pname, double params) {
 
-		glGetBooleanv (pname, (unsigned char*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetBooleanv (pname, (GLboolean*)(uintptr_t)params);
+			});
+		} else {
+			glGetBooleanv (pname, (GLboolean*)(uintptr_t)params);
+		}
 
 	}
 
@@ -1984,9 +3363,17 @@ namespace lime {
 
 	HL_PRIM int HL_NAME(hl_gl_get_buffer_parameteri) (int target, int index) {
 
-		GLint params = 0;
-		glGetBufferParameteriv (target, index, &params);
-		return params;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				GLint params = 0;
+				glGetBufferParameteriv (target, index, &params);
+				return params;
+			});
+		} else {
+			GLint params = 0;
+			glGetBufferParameteriv (target, index, &params);
+			return params;
+		}
 
 	}
 
@@ -2018,29 +3405,55 @@ namespace lime {
 
 	HL_PRIM void HL_NAME(hl_gl_get_buffer_parameteriv) (int target, int index, double params) {
 
-		glGetBufferParameteriv (target, index, (GLint*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetBufferParameteriv (target, index, (GLint*)(uintptr_t)params);
+			});
+		} else {
+			glGetBufferParameteriv (target, index, (GLint*)(uintptr_t)params);
+		}
 
 	}
 
 
 	double lime_gl_get_buffer_pointerv (int target, int pname) {
 
-		uintptr_t result = 0;
-		#ifdef LIME_GLES3_API
-		glGetBufferPointerv (target, pname, (void**)result);
-		#endif
-		return (double)result;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<double>([=] () {
+				uintptr_t result = 0;
+				#ifdef LIME_GLES3_API
+				glGetBufferPointerv (target, pname, (void**)&result);
+				#endif
+				return (double)result;
+			});
+		} else {
+			uintptr_t result = 0;
+			#ifdef LIME_GLES3_API
+			glGetBufferPointerv (target, pname, (void**)&result);
+			#endif
+			return (double)result;
+		}
 
 	}
 
 
 	HL_PRIM double HL_NAME(hl_gl_get_buffer_pointerv) (int target, int pname) {
 
-		uintptr_t result = 0;
-		#ifdef LIME_GLES3_API
-		glGetBufferPointerv (target, pname, (void**)result);
-		#endif
-		return (double)result;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<double>([=] () {
+				uintptr_t result = 0;
+				#ifdef LIME_GLES3_API
+				glGetBufferPointerv (target, pname, (void**)&result);
+				#endif
+				return (double)result;
+			});
+		} else {
+			uintptr_t result = 0;
+			#ifdef LIME_GLES3_API
+			glGetBufferPointerv (target, pname, (void**)&result);
+			#endif
+			return (double)result;
+		}
 
 	}
 
@@ -2057,7 +3470,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_get_buffer_sub_data) (int target, double offset, int size, double data) {
 
 		#ifndef LIME_GLES
-		glGetBufferSubData (target, (GLintptr)(uintptr_t)offset, size, (void*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetBufferSubData (target, (GLintptr)(uintptr_t)offset, size, (void*)(uintptr_t)data);
+			});
+		} else {
+			glGetBufferSubData (target, (GLintptr)(uintptr_t)offset, size, (void*)(uintptr_t)data);
+		}
 		#endif
 
 	}
@@ -2099,14 +3518,26 @@ namespace lime {
 
 	int lime_gl_get_error () {
 
-		return glGetError ();
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				return glGetError ();
+			});
+		} else {
+			return glGetError ();
+		}
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_get_error) () {
 
-		return glGetError ();
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				return glGetError ();
+			});
+		} else {
+			return glGetError ();
+		}
 
 	}
 
@@ -2213,32 +3644,60 @@ namespace lime {
 
 	float lime_gl_get_float (int pname) {
 
-		GLfloat params;
-		glGetFloatv (pname, &params);
-		return params;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<float>([=] () {
+				GLfloat params = 0;
+				glGetFloatv (pname, &params);
+				return (float)params;
+			});
+		} else {
+			GLfloat params = 0;
+			glGetFloatv (pname, &params);
+			return params;
+		}
 
 	}
 
 
 	HL_PRIM float HL_NAME(hl_gl_get_float) (int pname) {
 
-		GLfloat params;
-		glGetFloatv (pname, &params);
-		return params;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<float>([=] () {
+				GLfloat params = 0;
+				glGetFloatv (pname, &params);
+				return (float)params;
+			});
+		} else {
+			GLfloat params;
+			glGetFloatv (pname, &params);
+			return params;
+		}
 
 	}
 
 
 	void lime_gl_get_floatv (int pname, double params) {
 
-		glGetFloatv (pname, (GLfloat*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetFloatv (pname, (GLfloat*)(uintptr_t)params);
+			});
+		} else {
+			glGetFloatv (pname, (GLfloat*)(uintptr_t)params);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_get_floatv) (int pname, double params) {
 
-		glGetFloatv (pname, (GLfloat*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetFloatv (pname, (GLfloat*)(uintptr_t)params);
+			});
+		} else {
+			glGetFloatv (pname, (GLfloat*)(uintptr_t)params);
+		}
 
 	}
 
@@ -2257,7 +3716,14 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_get_frag_data_location) (int program, hl_vstring* name) {
 
 		#ifdef LIME_GLES3_API
-		return glGetFragDataLocation (program, name ? hl_to_utf8 (name->bytes) : NULL);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			std::string nameStr = name ? (char*)hl_to_utf8(name->bytes) : "";
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				return glGetFragDataLocation (program, nameStr.c_str());
+			});
+		} else {
+			return glGetFragDataLocation (program, name ? (char*)hl_to_utf8 (name->bytes) : NULL);
+		}
 		#else
 		return 0;
 		#endif
@@ -2267,50 +3733,94 @@ namespace lime {
 
 	int lime_gl_get_framebuffer_attachment_parameteri (int target, int attachment, int pname) {
 
-		GLint params = 0;
-		glGetFramebufferAttachmentParameteriv (target, attachment, pname, &params);
-		return params;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				GLint params = 0;
+				glGetFramebufferAttachmentParameteriv (target, attachment, pname, &params);
+				return params;
+			});
+		} else {
+			GLint params = 0;
+			glGetFramebufferAttachmentParameteriv (target, attachment, pname, &params);
+			return params;
+		}
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_get_framebuffer_attachment_parameteri) (int target, int attachment, int pname) {
 
-		GLint params = 0;
-		glGetFramebufferAttachmentParameteriv (target, attachment, pname, &params);
-		return params;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				GLint params = 0;
+				glGetFramebufferAttachmentParameteriv (target, attachment, pname, &params);
+				return params;
+			});
+		} else {
+			GLint params = 0;
+			glGetFramebufferAttachmentParameteriv (target, attachment, pname, &params);
+			return params;
+		}
 
 	}
 
 
 	void lime_gl_get_framebuffer_attachment_parameteriv (int target, int attachment, int pname, double params) {
 
-		glGetFramebufferAttachmentParameteriv (target, attachment, pname, (GLint*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetFramebufferAttachmentParameteriv (target, attachment, pname, (GLint*)(uintptr_t)params);
+			});
+		} else {
+			glGetFramebufferAttachmentParameteriv (target, attachment, pname, (GLint*)(uintptr_t)params);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_get_framebuffer_attachment_parameteriv) (int target, int attachment, int pname, double params) {
 
-		glGetFramebufferAttachmentParameteriv (target, attachment, pname, (GLint*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetFramebufferAttachmentParameteriv (target, attachment, pname, (GLint*)(uintptr_t)params);
+			});
+		} else {
+			glGetFramebufferAttachmentParameteriv (target, attachment, pname, (GLint*)(uintptr_t)params);
+		}
 
 	}
 
 
 	int lime_gl_get_integer (int pname) {
 
-		GLint params;
-		glGetIntegerv (pname, &params);
-		return params;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				GLint params = 0;
+				glGetIntegerv (pname, &params);
+				return (int)params;
+			});
+		} else {
+			GLint params = 0;
+			glGetIntegerv (pname, &params);
+			return params;
+		}
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_get_integer) (int pname) {
 
-		GLint params;
-		glGetIntegerv (pname, &params);
-		return params;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				GLint params = 0;
+				glGetIntegerv (pname, &params);
+				return (int)params;
+			});
+		} else {
+			GLint params;
+			glGetIntegerv (pname, &params);
+			return params;
+		}
 
 	}
 
@@ -2318,7 +3828,13 @@ namespace lime {
 	void lime_gl_get_integer64v (int pname, double params) {
 
 		#ifdef LIME_GLES3_API
-		glGetInteger64v (pname, (GLint64*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetInteger64v (pname, (GLint64*)(uintptr_t)params);
+			});
+		} else {
+			glGetInteger64v (pname, (GLint64*)(uintptr_t)params);
+		}
 		#endif
 
 	}
@@ -2327,7 +3843,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_get_integer64v) (int pname, double params) {
 
 		#ifdef LIME_GLES3_API
-		glGetInteger64v (pname, (GLint64*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetInteger64v (pname, (GLint64*)(uintptr_t)params);
+			});
+		} else {
+			glGetInteger64v (pname, (GLint64*)(uintptr_t)params);
+		}
 		#endif
 
 	}
@@ -2336,7 +3858,13 @@ namespace lime {
 	void lime_gl_get_integer64i_v (int pname, int index, double params) {
 
 		#ifdef LIME_GLES3_API
-		glGetInteger64i_v (pname, index, (GLint64*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetInteger64i_v (pname, index, (GLint64*)(uintptr_t)params);
+			});
+		} else {
+			glGetInteger64i_v (pname, index, (GLint64*)(uintptr_t)params);
+		}
 		#endif
 
 	}
@@ -2345,7 +3873,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_get_integer64i_v) (int pname, int index, double params) {
 
 		#ifdef LIME_GLES3_API
-		glGetInteger64i_v (pname, index, (GLint64*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetInteger64i_v (pname, index, (GLint64*)(uintptr_t)params);
+			});
+		} else {
+			glGetInteger64i_v (pname, index, (GLint64*)(uintptr_t)params);
+		}
 		#endif
 
 	}
@@ -2353,14 +3887,26 @@ namespace lime {
 
 	void lime_gl_get_integerv (int pname, double params) {
 
-		glGetIntegerv (pname, (GLint*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetIntegerv (pname, (GLint*)(uintptr_t)params);
+			});
+		} else {
+			glGetIntegerv (pname, (GLint*)(uintptr_t)params);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_get_integerv) (int pname, double params) {
 
-		glGetIntegerv (pname, (GLint*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetIntegerv (pname, (GLint*)(uintptr_t)params);
+			});
+		} else {
+			glGetIntegerv (pname, (GLint*)(uintptr_t)params);
+		}
 
 	}
 
@@ -2368,7 +3914,13 @@ namespace lime {
 	void lime_gl_get_integeri_v (int pname, int index, double params) {
 
 		#ifdef LIME_GLES3_API
-		glGetIntegeri_v (pname, index, (GLint*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetIntegeri_v (pname, index, (GLint*)(uintptr_t)params);
+			});
+		} else {
+			glGetIntegeri_v (pname, index, (GLint*)(uintptr_t)params);
+		}
 		#endif
 
 	}
@@ -2377,7 +3929,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_get_integeri_v) (int pname, int index, double params) {
 
 		#ifdef LIME_GLES3_API
-		glGetIntegeri_v (pname, index, (GLint*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetIntegeri_v (pname, index, (GLint*)(uintptr_t)params);
+			});
+		} else {
+			glGetIntegeri_v (pname, index, (GLint*)(uintptr_t)params);
+		}
 		#endif
 
 	}
@@ -2386,7 +3944,13 @@ namespace lime {
 	void lime_gl_get_internalformativ (int target, int internalformat, int pname, int bufSize, double params) {
 
 		#ifdef LIME_GLES3_API
-		glGetInternalformativ (target, internalformat, pname, (GLsizei)bufSize, (GLint*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetInternalformativ (target, internalformat, pname, (GLsizei)bufSize, (GLint*)(uintptr_t)params);
+			});
+		} else {
+			glGetInternalformativ (target, internalformat, pname, (GLsizei)bufSize, (GLint*)(uintptr_t)params);
+		}
 		#endif
 
 	}
@@ -2395,7 +3959,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_get_internalformativ) (int target, int internalformat, int pname, int bufSize, double params) {
 
 		#ifdef LIME_GLES3_API
-		glGetInternalformativ (target, internalformat, pname, (GLsizei)bufSize, (GLint*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetInternalformativ (target, internalformat, pname, (GLsizei)bufSize, (GLint*)(uintptr_t)params);
+			});
+		} else {
+			glGetInternalformativ (target, internalformat, pname, (GLsizei)bufSize, (GLint*)(uintptr_t)params);
+		}
 		#endif
 
 	}
@@ -2440,63 +4010,115 @@ namespace lime {
 
 	value lime_gl_get_program_info_log (int handle) {
 
-		GLuint program = handle;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			std::string log = OpenGLBindings::renderThread->RunCommandAndWait<std::string>([=] () {
+				GLuint program = handle;
+				GLint logSize = 0;
+				glGetProgramiv (program, GL_INFO_LOG_LENGTH, &logSize);
 
-		GLint logSize = 0;
-		glGetProgramiv (program, GL_INFO_LOG_LENGTH, &logSize);
+				if (logSize == 0) {
+					return std::string("");
+				}
 
-		if (logSize == 0) {
+				std::string buffer (logSize, 0);
+				glGetProgramInfoLog (program, logSize, 0, &buffer[0]);
+				return buffer;
+			});
 
-			return alloc_null ();
+			if (log.empty()) {
+				return alloc_null ();
+			}
+			return alloc_string (log.c_str ());
 
+		} else {
+			GLuint program = handle;
+
+			GLint logSize = 0;
+			glGetProgramiv (program, GL_INFO_LOG_LENGTH, &logSize);
+
+			if (logSize == 0) {
+				return alloc_null ();
+			}
+
+			std::string buffer (logSize, 0);
+			glGetProgramInfoLog (program, logSize, 0, &buffer[0]);
+			return alloc_string (buffer.c_str ());
 		}
-
-		std::string buffer (logSize, 0);
-
-		glGetProgramInfoLog (program, logSize, 0, &buffer[0]);
-
-		return alloc_string (buffer.c_str ());
 
 	}
 
 
 	HL_PRIM vbyte* HL_NAME(hl_gl_get_program_info_log) (int handle) {
 
-		GLuint program = handle;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			std::string log = OpenGLBindings::renderThread->RunCommandAndWait<std::string>([=] () {
+				GLuint program = handle;
+				GLint logSize = 0;
+				glGetProgramiv (program, GL_INFO_LOG_LENGTH, &logSize);
+				if (logSize == 0) return std::string("");
+				std::string buffer(logSize, 0);
+				glGetProgramInfoLog (program, logSize, 0, &buffer[0]);
+				return buffer;
+			});
 
-		GLint logSize = 0;
-		glGetProgramiv (program, GL_INFO_LOG_LENGTH, &logSize);
+			if (log.empty()) return NULL;
+			
+			char* buffer = (char*)malloc(log.size() + 1);
+			memcpy(buffer, log.c_str(), log.size() + 1);
+			return (vbyte*)buffer;
+		} else {
+			GLuint program = handle;
 
-		if (logSize == 0) {
+			GLint logSize = 0;
+			glGetProgramiv (program, GL_INFO_LOG_LENGTH, &logSize);
 
-			return NULL;
+			if (logSize == 0) {
 
+				return NULL;
+
+			}
+
+			char* buffer = (char*)malloc (logSize + 1);
+
+			glGetProgramInfoLog (program, logSize, 0, buffer);
+
+			buffer[logSize] = '\0';
+			return (vbyte*)buffer;
 		}
-
-		char* buffer = (char*)malloc (logSize + 1);
-
-		glGetProgramInfoLog (program, logSize, 0, buffer);
-
-		buffer[logSize] = '\0';
-		return (vbyte*)buffer;
 
 	}
 
 
 	int lime_gl_get_programi (int program, int pname) {
 
-		GLint params = 0;
-		glGetProgramiv (program, pname, &params);
-		return params;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				GLint params = 0;
+				glGetProgramiv (program, pname, &params);
+				return params;
+			});
+		} else {
+			GLint params = 0;
+			glGetProgramiv (program, pname, &params);
+			return params;
+		}
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_get_programi) (int program, int pname) {
 
-		GLint params = 0;
-		glGetProgramiv (program, pname, &params);
-		return params;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				GLint params = 0;
+				glGetProgramiv (program, pname, &params);
+				return (int)params;
+			});
+		} else {
+			GLint params = 0;
+			glGetProgramiv (program, pname, &params);
+			return params;
+		}
 
 	}
 
@@ -2510,7 +4132,13 @@ namespace lime {
 
 	HL_PRIM void HL_NAME(hl_gl_get_programiv) (int program, int pname, double params) {
 
-		glGetProgramiv (program, pname, (GLint*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetProgramiv (program, pname, (GLint*)(uintptr_t)params);
+			});
+		} else {
+			glGetProgramiv (program, pname, (GLint*)(uintptr_t)params);
+		}
 
 	}
 
@@ -2709,63 +4337,117 @@ namespace lime {
 
 	value lime_gl_get_shader_info_log (int handle) {
 
-		GLuint shader = handle;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			std::string log = OpenGLBindings::renderThread->RunCommandAndWait<std::string>([=] () {
+				GLuint shader = handle;
+				GLint logSize = 0;
+				glGetShaderiv (shader, GL_INFO_LOG_LENGTH, &logSize);
 
-		GLint logSize = 0;
-		glGetShaderiv (shader, GL_INFO_LOG_LENGTH, &logSize);
+				if (logSize == 0) {
+					return std::string("");
+				}
 
-		if (logSize == 0) {
+				std::string buffer (logSize, 0);
+				GLint writeSize;
+				glGetShaderInfoLog (shader, logSize, &writeSize, &buffer[0]);
+				return buffer;
+			});
 
-			return alloc_null ();
+			if (log.empty()) {
+				return alloc_null ();
+			}
+			return alloc_string (log.c_str ());
 
+		} else {
+			GLuint shader = handle;
+			GLint logSize = 0;
+			glGetShaderiv (shader, GL_INFO_LOG_LENGTH, &logSize);
+
+			if (logSize == 0) {
+				return alloc_null ();
+			}
+
+			std::string buffer (logSize, 0);
+			GLint writeSize;
+			glGetShaderInfoLog (shader, logSize, &writeSize, &buffer[0]);
+			return alloc_string (buffer.c_str ());
 		}
-
-		std::string buffer (logSize, 0);
-		GLint writeSize;
-		glGetShaderInfoLog (shader, logSize, &writeSize, &buffer[0]);
-
-		return alloc_string (buffer.c_str ());
 
 	}
 
 
 	HL_PRIM vbyte* HL_NAME(hl_gl_get_shader_info_log) (int handle) {
 
-		GLuint shader = handle;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			std::string log = OpenGLBindings::renderThread->RunCommandAndWait<std::string>([=] () {
+				GLuint shader = handle;
+				GLint logSize = 0;
+				glGetShaderiv (shader, GL_INFO_LOG_LENGTH, &logSize);
+				if (logSize == 0) return std::string("");
+				std::string buffer(logSize, 0);
+				GLint writeSize;
+				glGetShaderInfoLog (shader, logSize, &writeSize, &buffer[0]);
+				return buffer;
+			});
 
-		GLint logSize = 0;
-		glGetShaderiv (shader, GL_INFO_LOG_LENGTH, &logSize);
+			if (log.empty()) return NULL;
+			
+			char* buffer = (char*)malloc(log.size() + 1);
+			memcpy(buffer, log.c_str(), log.size() + 1);
+			return (vbyte*)buffer;
+		} else {
+			GLuint shader = handle;
 
-		if (logSize == 0) {
+			GLint logSize = 0;
+			glGetShaderiv (shader, GL_INFO_LOG_LENGTH, &logSize);
 
-			return NULL;
+			if (logSize == 0) {
 
+				return NULL;
+
+			}
+
+			char* buffer = (char*)malloc (logSize + 1);
+			GLint writeSize;
+			glGetShaderInfoLog (shader, logSize, &writeSize, buffer);
+
+			buffer[logSize] = '\0';
+			return (vbyte*)buffer;
 		}
-
-		char* buffer = (char*)malloc (logSize + 1);
-		GLint writeSize;
-		glGetShaderInfoLog (shader, logSize, &writeSize, buffer);
-
-		buffer[logSize] = '\0';
-		return (vbyte*)buffer;
 
 	}
 
 
 	int lime_gl_get_shaderi (int shader, int pname) {
 
-		GLint params = 0;
-		glGetShaderiv (shader, pname, &params);
-		return params;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				GLint params = 0;
+				glGetShaderiv (shader, pname, &params);
+				return params;
+			});
+		} else {
+			GLint params = 0;
+			glGetShaderiv (shader, pname, &params);
+			return params;
+		}
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_get_shaderi) (int shader, int pname) {
 
-		GLint params = 0;
-		glGetShaderiv (shader, pname, &params);
-		return params;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				GLint params = 0;
+				glGetShaderiv (shader, pname, &params);
+				return (int)params;
+			});
+		} else {
+			GLint params = 0;
+			glGetShaderiv (shader, pname, &params);
+			return params;
+		}
 
 	}
 
@@ -2779,7 +4461,13 @@ namespace lime {
 
 	HL_PRIM void HL_NAME(hl_gl_get_shaderiv) (int shader, int pname, double params) {
 
-		glGetShaderiv (shader, pname, (GLint*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetShaderiv (shader, pname, (GLint*)(uintptr_t)params);
+			});
+		} else {
+			glGetShaderiv (shader, pname, (GLint*)(uintptr_t)params);
+		}
 
 	}
 
@@ -2838,58 +4526,103 @@ namespace lime {
 
 	value lime_gl_get_shader_source (int shader) {
 
-		GLint len = 0;
-		glGetShaderiv (shader, GL_SHADER_SOURCE_LENGTH, &len);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			std::string source = OpenGLBindings::renderThread->RunCommandAndWait<std::string>([=] () {
+				GLint len = 0;
+				glGetShaderiv (shader, GL_SHADER_SOURCE_LENGTH, &len);
 
-		if (len == 0) {
+				if (len == 0) {
+					return std::string("");
+				}
 
-			return alloc_null ();
+				char *buf = new char[len + 1];
+				glGetShaderSource (shader, len + 1, 0, buf);
+				std::string s(buf);
+				delete [] buf;
+				return s;
+			});
 
+			if (source.empty()) {
+				return alloc_null ();
+			}
+			return alloc_string (source.c_str());
+		} else {
+			GLint len = 0;
+			glGetShaderiv (shader, GL_SHADER_SOURCE_LENGTH, &len);
+
+			if (len == 0) {
+				return alloc_null ();
+			}
+
+			char *buf = new char[len + 1];
+			glGetShaderSource (shader, len + 1, 0, buf);
+			value result = alloc_string (buf);
+
+			delete [] buf;
+
+			return result;
 		}
-
-		char *buf = new char[len + 1];
-		glGetShaderSource (shader, len + 1, 0, buf);
-		value result = alloc_string (buf);
-
-		delete [] buf;
-
-		return result;
 
 	}
 
 
 	HL_PRIM vbyte* HL_NAME(hl_gl_get_shader_source) (int shader) {
 
-		GLint len = 0;
-		glGetShaderiv (shader, GL_SHADER_SOURCE_LENGTH, &len);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			std::string source = OpenGLBindings::renderThread->RunCommandAndWait<std::string>([=] () {
+				GLint len = 0;
+				glGetShaderiv (shader, GL_SHADER_SOURCE_LENGTH, &len);
+				if (len == 0) return std::string("");
+				std::string buffer(len, 0);
+				glGetShaderSource (shader, len, 0, &buffer[0]);
+				return buffer;
+			});
 
-		if (len == 0) {
+			if (source.empty()) return NULL;
 
-			return NULL;
+			char *result = new char[source.size() + 1];
+			memcpy(result, source.c_str(), source.size() + 1);
+			return (vbyte*)result;
+		} else {
+			GLint len = 0;
+			glGetShaderiv (shader, GL_SHADER_SOURCE_LENGTH, &len);
 
+			if (len == 0) {
+
+				return NULL;
+
+			}
+
+			char *result = new char[len + 1];
+			glGetShaderSource (shader, len, 0, result);
+
+			result[len] = '\0';
+			return (vbyte*)result;
 		}
-
-		char *result = new char[len + 1];
-		glGetShaderSource (shader, len, 0, result);
-
-		result[len] = '\0';
-		return (vbyte*)result;
 
 	}
 
 
 	value lime_gl_get_string (int pname) {
 
-		const char* val = (const char*)glGetString (pname);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			std::string val = OpenGLBindings::renderThread->RunCommandAndWait<std::string>([=] () {
+				const char* result = (const char*)glGetString (pname);
+				return result ? std::string(result) : std::string("");
+			});
 
-		if (val) {
-
-			return alloc_string (val);
-
+			if (val.empty()) {
+				return alloc_null ();
+			} else {
+				return alloc_string (val.c_str());
+			}
 		} else {
-
-			return alloc_null ();
-
+			const char* val = (const char*)glGetString (pname);
+			if (val) {
+				return alloc_string (val);
+			} else {
+				return alloc_null ();
+			}
 		}
 
 	}
@@ -2897,20 +4630,33 @@ namespace lime {
 
 	HL_PRIM vbyte* HL_NAME(hl_gl_get_string) (int pname) {
 
-		const char* val = (const char*)glGetString (pname);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			std::string val = OpenGLBindings::renderThread->RunCommandAndWait<std::string>([=] () {
+				const char* result = (const char*)glGetString (pname);
+				return result ? std::string(result) : std::string("");
+			});
 
-		if (val) {
-
-			int size = strlen (val);
-			char* result = (char*)malloc (size + 1);
-			memcpy (result, val, size);
-			result[size] = '\0';
-			return (vbyte*)result;
-
+			if (val.empty()) return NULL;
+			
+			char* buffer = (char*)malloc(val.size() + 1);
+			memcpy(buffer, val.c_str(), val.size() + 1);
+			return (vbyte*)buffer;
 		} else {
+			const char* val = (const char*)glGetString (pname);
 
-			return NULL;
+			if (val) {
 
+				int size = strlen (val);
+				char* result = (char*)malloc (size + 1);
+				memcpy (result, val, size);
+				result[size] = '\0';
+				return (vbyte*)result;
+
+			} else {
+
+				return NULL;
+
+			}
 		}
 
 	}
@@ -3004,18 +4750,34 @@ namespace lime {
 
 	float lime_gl_get_tex_parameterf (int target, int pname) {
 
-		GLfloat params = 0;
-		glGetTexParameterfv (target, pname, &params);
-		return params;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<float>([=] () {
+				GLfloat params = 0;
+				glGetTexParameterfv (target, pname, &params);
+				return (float)params;
+			});
+		} else {
+			GLfloat params = 0;
+			glGetTexParameterfv (target, pname, &params);
+			return params;
+		}
 
 	}
 
 
 	HL_PRIM float HL_NAME(hl_gl_get_tex_parameterf) (int target, int pname) {
 
-		GLfloat params = 0;
-		glGetTexParameterfv (target, pname, &params);
-		return params;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<float>([=] () {
+				GLfloat params = 0;
+				glGetTexParameterfv (target, pname, &params);
+				return (float)params;
+			});
+		} else {
+			GLfloat params = 0;
+			glGetTexParameterfv (target, pname, &params);
+			return params;
+		}
 
 	}
 
@@ -3036,32 +4798,60 @@ namespace lime {
 
 	int lime_gl_get_tex_parameteri (int target, int pname) {
 
-		GLint params = 0;
-		glGetTexParameteriv (target, pname, &params);
-		return params;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				GLint params = 0;
+				glGetTexParameteriv (target, pname, &params);
+				return (int)params;
+			});
+		} else {
+			GLint params = 0;
+			glGetTexParameteriv (target, pname, &params);
+			return params;
+		}
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_get_tex_parameteri) (int target, int pname) {
 
-		GLint params = 0;
-		glGetTexParameteriv (target, pname, &params);
-		return params;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				GLint params = 0;
+				glGetTexParameteriv (target, pname, &params);
+				return (int)params;
+			});
+		} else {
+			GLint params = 0;
+			glGetTexParameteriv (target, pname, &params);
+			return params;
+		}
 
 	}
 
 
 	void lime_gl_get_tex_parameteriv (int target, int pname, double params) {
 
-		glGetTexParameteriv (target, pname, (GLint*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetTexParameteriv (target, pname, (GLint*)(uintptr_t)params);
+			});
+		} else {
+			glGetTexParameteriv (target, pname, (GLint*)(uintptr_t)params);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_get_tex_parameteriv) (int target, int pname, double params) {
 
-		glGetTexParameteriv (target, pname, (GLint*)(uintptr_t)params);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glGetTexParameteriv (target, pname, (GLint*)(uintptr_t)params);
+			});
+		} else {
+			glGetTexParameteriv (target, pname, (GLint*)(uintptr_t)params);
+		}
 
 	}
 
@@ -3249,7 +5039,14 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_get_uniform_block_index) (int program, hl_vstring* uniformBlockName) {
 
 		#ifdef LIME_GLES3_API
-		return glGetUniformBlockIndex (program, uniformBlockName ? hl_to_utf8 (uniformBlockName->bytes) : NULL);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			std::string nameStr = uniformBlockName ? (char*)hl_to_utf8(uniformBlockName->bytes) : "";
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				return glGetUniformBlockIndex (program, nameStr.c_str());
+			});
+		} else {
+			return glGetUniformBlockIndex (program, uniformBlockName ? (char*)hl_to_utf8 (uniformBlockName->bytes) : NULL);
+		}
 		#else
 		return 0;
 		#endif
@@ -3259,14 +5056,28 @@ namespace lime {
 
 	int lime_gl_get_uniform_location (int program, HxString name) {
 
-		return glGetUniformLocation (program, name.__s);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			std::string nameStr(name.__s);
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				return glGetUniformLocation (program, nameStr.c_str());
+			});
+		} else {
+			return glGetUniformLocation (program, name.__s);
+		}
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_get_uniform_location) (int program, hl_vstring* name) {
 
-		return glGetUniformLocation (program, name ? hl_to_utf8 (name->bytes) : NULL);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			std::string nameStr = name ? (char*)hl_to_utf8(name->bytes) : "";
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+				return glGetUniformLocation (program, nameStr.c_str());
+			});
+		} else {
+			return glGetUniformLocation (program, name ? (char*)hl_to_utf8 (name->bytes) : NULL);
+		}
 
 	}
 
@@ -3729,14 +5540,53 @@ namespace lime {
 
 	void lime_gl_link_program (int program) {
 
-		glLinkProgram (program);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glLinkProgram (program);
+				GLint status;
+				glGetProgramiv(program, GL_LINK_STATUS, &status);
+				//printf("[GL] glLinkProgram program %d status: %d\n", program, status);
+				if (status == 0) {
+					GLint logLen;
+					glGetProgramiv(program, GL_INFO_LOG_LENGTH, &logLen);
+					if (logLen > 0) {
+						char* log = new char[logLen];
+						glGetProgramInfoLog(program, logLen, 0, log);
+						printf("[GL] Program Link Log: %s\n", log);
+						delete[] log;
+					} else {
+						printf("[GL] Program Link Failed but Log Length is 0. GL Error: %d\n", glGetError());
+					}
+				}
+			});
+		} else {
+			glLinkProgram (program);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_link_program) (int program) {
 
-		glLinkProgram (program);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glLinkProgram (program);
+				GLint status;
+				glGetProgramiv(program, GL_LINK_STATUS, &status);
+				if (status == 0) {
+					GLint logLen;
+					glGetProgramiv(program, GL_INFO_LOG_LENGTH, &logLen);
+					if (logLen > 0) {
+						char* log = new char[logLen];
+						glGetProgramInfoLog(program, logLen, 0, log);
+						printf("[GL] Program Link Log: %s\n", log);
+						delete[] log;
+					}
+				}
+			});
+		} else {
+			glLinkProgram (program);
+		}
 
 	}
 
@@ -3744,8 +5594,15 @@ namespace lime {
 	double lime_gl_map_buffer_range (int target, double offset, int length, int access) {
 
 		#ifdef LIME_GLES3_API
-		uintptr_t result = (uintptr_t)glMapBufferRange (target, (GLintptr)(uintptr_t)offset, length, access);
-		return (double)result;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<double>([=] () {
+				uintptr_t result = (uintptr_t)glMapBufferRange (target, (GLintptr)(uintptr_t)offset, length, access);
+				return (double)result;
+			});
+		} else {
+			uintptr_t result = (uintptr_t)glMapBufferRange (target, (GLintptr)(uintptr_t)offset, length, access);
+			return (double)result;
+		}
 		#else
 		return 0;
 		#endif
@@ -3756,8 +5613,15 @@ namespace lime {
 	HL_PRIM double HL_NAME(hl_gl_map_buffer_range) (int target, double offset, int length, int access) {
 
 		#ifdef LIME_GLES3_API
-		uintptr_t result = (uintptr_t)glMapBufferRange (target, (GLintptr)(uintptr_t)offset, length, access);
-		return (double)result;
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<double>([=] () {
+				uintptr_t result = (uintptr_t)glMapBufferRange (target, (GLintptr)(uintptr_t)offset, length, access);
+				return (double)result;
+			});
+		} else {
+			uintptr_t result = (uintptr_t)glMapBufferRange (target, (GLintptr)(uintptr_t)offset, length, access);
+			return (double)result;
+		}
 		#else
 		return 0;
 		#endif
@@ -3905,7 +5769,13 @@ namespace lime {
 	void lime_gl_pause_transform_feedback () {
 
 		#ifdef LIME_GLES3_API
-		glPauseTransformFeedback ();
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glPauseTransformFeedback ();
+			});
+		} else {
+			glPauseTransformFeedback ();
+		}
 		#endif
 
 	}
@@ -3914,7 +5784,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_pause_transform_feedback) () {
 
 		#ifdef LIME_GLES3_API
-		glPauseTransformFeedback ();
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glPauseTransformFeedback ();
+			});
+		} else {
+			glPauseTransformFeedback ();
+		}
 		#endif
 
 	}
@@ -3922,28 +5798,52 @@ namespace lime {
 
 	void lime_gl_pixel_storei (int pname, int param) {
 
-		glPixelStorei (pname, param);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glPixelStorei (pname, param);
+			});
+		} else {
+			glPixelStorei (pname, param);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_pixel_storei) (int pname, int param) {
 
-		glPixelStorei (pname, param);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glPixelStorei (pname, param);
+			});
+		} else {
+			glPixelStorei (pname, param);
+		}
 
 	}
 
 
 	void lime_gl_polygon_offset (float factor, float units) {
 
-		glPolygonOffset (factor, units);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glPolygonOffset (factor, units);
+			});
+		} else {
+			glPolygonOffset (factor, units);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_polygon_offset) (float factor, float units) {
 
-		glPolygonOffset (factor, units);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glPolygonOffset (factor, units);
+			});
+		} else {
+			glPolygonOffset (factor, units);
+		}
 
 	}
 
@@ -3951,7 +5851,17 @@ namespace lime {
 	void lime_gl_program_binary (int program, int binaryFormat, double binary, int length) {
 
 		#ifdef LIME_GLES3_API
-		glProgramBinary (program, binaryFormat, (void*)(uintptr_t)binary, length);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			void* binaryCopy = malloc(length);
+			memcpy(binaryCopy, (void*)(uintptr_t)binary, length);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glProgramBinary (program, binaryFormat, binaryCopy, length);
+				free(binaryCopy);
+			});
+		} else {
+			glProgramBinary (program, binaryFormat, (void*)(uintptr_t)binary, length);
+		}
 		#endif
 
 	}
@@ -3960,7 +5870,17 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_program_binary) (int program, int binaryFormat, double binary, int length) {
 
 		#ifdef LIME_GLES3_API
-		glProgramBinary (program, binaryFormat, (void*)(uintptr_t)binary, length);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			void* binaryCopy = malloc(length);
+			memcpy(binaryCopy, (void*)(uintptr_t)binary, length);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glProgramBinary (program, binaryFormat, binaryCopy, length);
+				free(binaryCopy);
+			});
+		} else {
+			glProgramBinary (program, binaryFormat, (void*)(uintptr_t)binary, length);
+		}
 		#endif
 
 	}
@@ -3969,7 +5889,13 @@ namespace lime {
 	void lime_gl_program_parameteri (int program, int pname, int value) {
 
 		#ifdef LIME_GLES3_API
-		glProgramParameteri (program, pname, value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glProgramParameteri (program, pname, value);
+			});
+		} else {
+			glProgramParameteri (program, pname, value);
+		}
 		#endif
 
 	}
@@ -3978,7 +5904,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_program_parameteri) (int program, int pname, int value) {
 
 		#ifdef LIME_GLES3_API
-		glProgramParameteri (program, pname, value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glProgramParameteri (program, pname, value);
+			});
+		} else {
+			glProgramParameteri (program, pname, value);
+		}
 		#endif
 
 	}
@@ -3987,7 +5919,13 @@ namespace lime {
 	void lime_gl_read_buffer (int src) {
 
 		#ifdef LIME_GLES3_API
-		glReadBuffer (src);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glReadBuffer (src);
+			});
+		} else {
+			glReadBuffer (src);
+		}
 		#endif
 
 	}
@@ -3996,7 +5934,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_read_buffer) (int src) {
 
 		#ifdef LIME_GLES3_API
-		glReadBuffer (src);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glReadBuffer (src);
+			});
+		} else {
+			glReadBuffer (src);
+		}
 		#endif
 
 	}
@@ -4004,14 +5948,27 @@ namespace lime {
 
 	void lime_gl_read_pixels (int x, int y, int width, int height, int format, int type, double pixels) {
 
-		glReadPixels (x, y, width, height, format, type, (void*)(uintptr_t)pixels);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			// This MUST be synchronous because we are reading back to CPU memory provided by the caller
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glReadPixels (x, y, width, height, format, type, (void*)(uintptr_t)pixels);
+			});
+		} else {
+			glReadPixels (x, y, width, height, format, type, (void*)(uintptr_t)pixels);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_read_pixels) (int x, int y, int width, int height, int format, int type, double pixels) {
 
-		glReadPixels (x, y, width, height, format, type, (void*)(uintptr_t)pixels);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glReadPixels (x, y, width, height, format, type, (void*)(uintptr_t)pixels);
+			});
+		} else {
+			glReadPixels (x, y, width, height, format, type, (void*)(uintptr_t)pixels);
+		}
 
 	}
 
@@ -4019,7 +5976,13 @@ namespace lime {
 	void lime_gl_release_shader_compiler () {
 
 		#ifdef LIME_GLES3_API
-		glReleaseShaderCompiler ();
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glReleaseShaderCompiler ();
+			});
+		} else {
+			glReleaseShaderCompiler ();
+		}
 		#endif
 
 	}
@@ -4036,14 +5999,26 @@ namespace lime {
 
 	void lime_gl_renderbuffer_storage (int target, int internalformat, int width, int height) {
 
-		glRenderbufferStorage (target, internalformat, width, height);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glRenderbufferStorage (target, internalformat, width, height);
+			});
+		} else {
+			glRenderbufferStorage (target, internalformat, width, height);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_renderbuffer_storage) (int target, int internalformat, int width, int height) {
 
-		glRenderbufferStorage (target, internalformat, width, height);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glRenderbufferStorage (target, internalformat, width, height);
+			});
+		} else {
+			glRenderbufferStorage (target, internalformat, width, height);
+		}
 
 	}
 
@@ -4051,7 +6026,13 @@ namespace lime {
 	void lime_gl_renderbuffer_storage_multisample (int target, int samples, int internalformat, int width, int height) {
 
 		#ifdef LIME_GLES3_API
-		glRenderbufferStorageMultisample (target, samples, internalformat, width, height);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glRenderbufferStorageMultisample (target, samples, internalformat, width, height);
+			});
+		} else {
+			glRenderbufferStorageMultisample (target, samples, internalformat, width, height);
+		}
 		#endif
 
 	}
@@ -4060,7 +6041,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_renderbuffer_storage_multisample) (int target, int samples, int internalformat, int width, int height) {
 
 		#ifdef LIME_GLES3_API
-		glRenderbufferStorageMultisample (target, samples, internalformat, width, height);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glRenderbufferStorageMultisample (target, samples, internalformat, width, height);
+			});
+		} else {
+			glRenderbufferStorageMultisample (target, samples, internalformat, width, height);
+		}
 		#endif
 
 	}
@@ -4069,7 +6056,13 @@ namespace lime {
 	void lime_gl_resume_transform_feedback () {
 
 		#ifdef LIME_GLES3_API
-		glResumeTransformFeedback ();
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glResumeTransformFeedback ();
+			});
+		} else {
+			glResumeTransformFeedback ();
+		}
 		#endif
 
 	}
@@ -4078,7 +6071,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_resume_transform_feedback) () {
 
 		#ifdef LIME_GLES3_API
-		glResumeTransformFeedback ();
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glResumeTransformFeedback ();
+			});
+		} else {
+			glResumeTransformFeedback ();
+		}
 		#endif
 
 	}
@@ -4087,7 +6086,13 @@ namespace lime {
 	void lime_gl_sample_coverage (float val, bool invert) {
 
 		#ifdef LIME_GLES3_API
-		glSampleCoverage (val, invert);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glSampleCoverage (val, invert);
+			});
+		} else {
+			glSampleCoverage (val, invert);
+		}
 		#endif
 
 	}
@@ -4096,7 +6101,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_sample_coverage) (float val, bool invert) {
 
 		#ifdef LIME_GLES3_API
-		glSampleCoverage (val, invert);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glSampleCoverage (val, invert);
+			});
+		} else {
+			glSampleCoverage (val, invert);
+		}
 		#endif
 
 	}
@@ -4105,7 +6116,13 @@ namespace lime {
 	void lime_gl_sampler_parameterf (int sampler, int pname, float param) {
 
 		#ifdef LIME_GLES3_API
-		glSamplerParameterf (sampler, pname, param);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glSamplerParameterf (sampler, pname, param);
+			});
+		} else {
+			glSamplerParameterf (sampler, pname, param);
+		}
 		#endif
 
 	}
@@ -4114,7 +6131,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_sampler_parameterf) (int sampler, int pname, float param) {
 
 		#ifdef LIME_GLES3_API
-		glSamplerParameterf (sampler, pname, param);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glSamplerParameterf (sampler, pname, param);
+			});
+		} else {
+			glSamplerParameterf (sampler, pname, param);
+		}
 		#endif
 
 	}
@@ -4123,7 +6146,13 @@ namespace lime {
 	void lime_gl_sampler_parameteri (int sampler, int pname, int param) {
 
 		#ifdef LIME_GLES3_API
-		glSamplerParameteri (sampler, pname, param);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glSamplerParameteri (sampler, pname, param);
+			});
+		} else {
+			glSamplerParameteri (sampler, pname, param);
+		}
 		#endif
 
 	}
@@ -4132,7 +6161,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_sampler_parameteri) (int sampler, int pname, int param) {
 
 		#ifdef LIME_GLES3_API
-		glSamplerParameteri (sampler, pname, param);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glSamplerParameteri (sampler, pname, param);
+			});
+		} else {
+			glSamplerParameteri (sampler, pname, param);
+		}
 		#endif
 
 	}
@@ -4140,14 +6175,26 @@ namespace lime {
 
 	void lime_gl_scissor (int x, int y, int width, int height) {
 
-		glScissor (x, y, width, height);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glScissor (x, y, width, height);
+			});
+		} else {
+			glScissor (x, y, width, height);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_scissor) (int x, int y, int width, int height) {
 
-		glScissor (x, y, width, height);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glScissor (x, y, width, height);
+			});
+		} else {
+			glScissor (x, y, width, height);
+		}
 
 	}
 
@@ -4156,15 +6203,27 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		GLsizei size = val_array_size (shaders);
-		GLenum *_shaders = (GLenum*)alloca (size * sizeof(GLenum));
+		GLenum *shadersCopy = new GLenum[size];
 
 		for (int i = 0; i < size; i++) {
 
-			_shaders[i] = val_int (val_array_i (shaders, i));
+			shadersCopy[i] = val_int (val_array_i (shaders, i));
 
 		}
 
-		glShaderBinary (size, _shaders, binaryformat, (void*)(uintptr_t)binary, length);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			void* binaryCopy = malloc(length);
+			memcpy(binaryCopy, (void*)(uintptr_t)binary, length);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glShaderBinary (size, shadersCopy, binaryformat, binaryCopy, length);
+				delete[] shadersCopy;
+				free(binaryCopy);
+			});
+		} else {
+			glShaderBinary (size, shadersCopy, binaryformat, (void*)(uintptr_t)binary, length);
+			delete[] shadersCopy;
+		}
 		#endif
 
 	}
@@ -4174,7 +6233,24 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		GLsizei size = shaders->size;
-		glShaderBinary (size, (GLenum*)hl_aptr (shaders, int), binaryformat, (void*)(uintptr_t)binary, length);
+		GLenum *shadersCopy = new GLenum[size];
+		
+		GLenum* src = (GLenum*)hl_aptr (shaders, int);
+		for(int i=0; i<size; i++) shadersCopy[i] = src[i];
+
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			void* binaryCopy = malloc(length);
+			memcpy(binaryCopy, (void*)(uintptr_t)binary, length);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glShaderBinary (size, shadersCopy, binaryformat, binaryCopy, length);
+				delete[] shadersCopy;
+				free(binaryCopy);
+			});
+		} else {
+			glShaderBinary (size, shadersCopy, binaryformat, (void*)(uintptr_t)binary, length);
+			delete[] shadersCopy;
+		}
 		#endif
 
 	}
@@ -4182,113 +6258,226 @@ namespace lime {
 
 	void lime_gl_shader_source (int handle, HxString source) {
 
-		glShaderSource (handle, 1, &source.__s, 0);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			std::string sourceStr(source.__s);
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				const char* s = sourceStr.c_str();
+				glShaderSource (handle, 1, &s, 0);
+			});
+		} else {
+			glShaderSource (handle, 1, &source.__s, 0);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_shader_source) (int handle, hl_vstring* source) {
 
-		const char* _source = source ? hl_to_utf8 (source->bytes) : NULL;
-		glShaderSource (handle, 1, (const char**)&_source, 0);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			std::string sourceStr = source ? (char*)hl_to_utf8(source->bytes) : "";
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				const char* s = sourceStr.c_str();
+				glShaderSource (handle, 1, &s, 0);
+			});
+		} else {
+			const char* _source = source ? hl_to_utf8 (source->bytes) : NULL;
+			glShaderSource (handle, 1, (const char**)&_source, 0);
+		}
 
 	}
 
 
 	void lime_gl_stencil_func (int func, int ref, int mask) {
 
-		glStencilFunc (func, ref, mask);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glStencilFunc (func, ref, mask);
+			});
+		} else {
+			glStencilFunc (func, ref, mask);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_stencil_func) (int func, int ref, int mask) {
 
-		glStencilFunc (func, ref, mask);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glStencilFunc (func, ref, mask);
+			});
+		} else {
+			glStencilFunc (func, ref, mask);
+		}
 
 	}
 
 
 	void lime_gl_stencil_func_separate (int face, int func, int ref, int mask) {
 
-		glStencilFuncSeparate (face, func, ref, mask);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glStencilFuncSeparate (face, func, ref, mask);
+			});
+		} else {
+			glStencilFuncSeparate (face, func, ref, mask);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_stencil_func_separate) (int face, int func, int ref, int mask) {
 
-		glStencilFuncSeparate (face, func, ref, mask);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glStencilFuncSeparate (face, func, ref, mask);
+			});
+		} else {
+			glStencilFuncSeparate (face, func, ref, mask);
+		}
 
 	}
 
 
 	void lime_gl_stencil_mask (int mask) {
 
-		glStencilMask (mask);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glStencilMask (mask);
+			});
+		} else {
+			glStencilMask (mask);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_stencil_mask) (int mask) {
 
-		glStencilMask (mask);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glStencilMask (mask);
+			});
+		} else {
+			glStencilMask (mask);
+		}
 
 	}
 
 
 	void lime_gl_stencil_mask_separate (int face, int mask) {
 
-		glStencilMaskSeparate (face, mask);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glStencilMaskSeparate (face, mask);
+			});
+		} else {
+			glStencilMaskSeparate (face, mask);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_stencil_mask_separate) (int face, int mask) {
 
-		glStencilMaskSeparate (face, mask);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glStencilMaskSeparate (face, mask);
+			});
+		} else {
+			glStencilMaskSeparate (face, mask);
+		}
 
 	}
 
 
 	void lime_gl_stencil_op (int sfail, int dpfail, int dppass) {
 
-		glStencilOp (sfail, dpfail, dppass);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glStencilOp (sfail, dpfail, dppass);
+			});
+		} else {
+			glStencilOp (sfail, dpfail, dppass);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_stencil_op) (int sfail, int dpfail, int dppass) {
 
-		glStencilOp (sfail, dpfail, dppass);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glStencilOp (sfail, dpfail, dppass);
+			});
+		} else {
+			glStencilOp (sfail, dpfail, dppass);
+		}
 
 	}
 
 
 	void lime_gl_stencil_op_separate (int face, int sfail, int dpfail, int dppass) {
 
-		glStencilOpSeparate (face, sfail, dpfail, dppass);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glStencilOpSeparate (face, sfail, dpfail, dppass);
+			});
+		} else {
+			glStencilOpSeparate (face, sfail, dpfail, dppass);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_stencil_op_separate) (int face, int sfail, int dpfail, int dppass) {
 
-		glStencilOpSeparate (face, sfail, dpfail, dppass);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glStencilOpSeparate (face, sfail, dpfail, dppass);
+			});
+		} else {
+			glStencilOpSeparate (face, sfail, dpfail, dppass);
+		}
 
 	}
 
 
 	void lime_gl_tex_image_2d (int target, int level, int internalformat, int width, int height, int border, int format, int type, double data) {
 
-		glTexImage2D (target, level, internalformat, width, height, border, format, type, (void*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			if ((void*)(uintptr_t)data == nullptr) {
+				OpenGLBindings::renderThread->PushCommand ([=] () {
+					glTexImage2D (target, level, internalformat, width, height, border, format, type, nullptr);
+				});
+				return;
+			}
+			
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glTexImage2D (target, level, internalformat, width, height, border, format, type, (void*)(uintptr_t)data);
+			});
+		} else {
+			glTexImage2D (target, level, internalformat, width, height, border, format, type, (void*)(uintptr_t)data);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_tex_image_2d) (int target, int level, int internalformat, int width, int height, int border, int format, int type, double data) {
 
-		glTexImage2D (target, level, internalformat, width, height, border, format, type, (void*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			if ((void*)(uintptr_t)data == nullptr) {
+				OpenGLBindings::renderThread->PushCommand ([=] () {
+					glTexImage2D (target, level, internalformat, width, height, border, format, type, nullptr);
+				});
+			} else {
+				OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+					glTexImage2D (target, level, internalformat, width, height, border, format, type, (void*)(uintptr_t)data);
+				});
+			}
+		} else {
+			glTexImage2D (target, level, internalformat, width, height, border, format, type, (void*)(uintptr_t)data);
+		}
 
 	}
 
@@ -4296,7 +6485,19 @@ namespace lime {
 	void lime_gl_tex_image_3d (int target, int level, int internalformat, int width, int height, int depth, int border, int format, int type, double data) {
 
 		#ifdef LIME_GLES3_API
-		glTexImage3D (target, level, internalformat, width, height, depth, border, format, type, (void*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			if ((void*)(uintptr_t)data == nullptr) {
+				OpenGLBindings::renderThread->PushCommand ([=] () {
+					glTexImage3D (target, level, internalformat, width, height, depth, border, format, type, nullptr);
+				});
+			} else {
+				OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+					glTexImage3D (target, level, internalformat, width, height, depth, border, format, type, (void*)(uintptr_t)data);
+				});
+			}
+		} else {
+			glTexImage3D (target, level, internalformat, width, height, depth, border, format, type, (void*)(uintptr_t)data);
+		}
 		#endif
 
 	}
@@ -4305,7 +6506,19 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_tex_image_3d) (int target, int level, int internalformat, int width, int height, int depth, int border, int format, int type, double data) {
 
 		#ifdef LIME_GLES3_API
-		glTexImage3D (target, level, internalformat, width, height, depth, border, format, type, (void*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			if ((void*)(uintptr_t)data == nullptr) {
+				OpenGLBindings::renderThread->PushCommand ([=] () {
+					glTexImage3D (target, level, internalformat, width, height, depth, border, format, type, nullptr);
+				});
+			} else {
+				OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+					glTexImage3D (target, level, internalformat, width, height, depth, border, format, type, (void*)(uintptr_t)data);
+				});
+			}
+		} else {
+			glTexImage3D (target, level, internalformat, width, height, depth, border, format, type, (void*)(uintptr_t)data);
+		}
 		#endif
 
 	}
@@ -4313,28 +6526,52 @@ namespace lime {
 
 	void lime_gl_tex_parameterf (int target, int pname, float param) {
 
-		glTexParameterf (target, pname, param);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glTexParameterf (target, pname, param);
+			});
+		} else {
+			glTexParameterf (target, pname, param);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_tex_parameterf) (int target, int pname, float param) {
 
-		glTexParameterf (target, pname, param);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glTexParameterf (target, pname, param);
+			});
+		} else {
+			glTexParameterf (target, pname, param);
+		}
 
 	}
 
 
 	void lime_gl_tex_parameteri (int target, int pname, int param) {
 
-		glTexParameterf (target, pname, param);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glTexParameteri (target, pname, param);
+			});
+		} else {
+			glTexParameteri (target, pname, param);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_tex_parameteri) (int target, int pname, int param) {
 
-		glTexParameterf (target, pname, param);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glTexParameteri (target, pname, param);
+			});
+		} else {
+			glTexParameteri (target, pname, param);
+		}
 
 	}
 
@@ -4377,7 +6614,14 @@ namespace lime {
 
 	void lime_gl_tex_sub_image_2d (int target, int level, int xoffset, int yoffset, int width, int height, int format, int type, double data) {
 
-		glTexSubImage2D (target, level, xoffset, yoffset, width, height, format, type, (void*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			// Blocking for safety and simplicity
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glTexSubImage2D (target, level, xoffset, yoffset, width, height, format, type, (void*)(uintptr_t)data);
+			});
+		} else {
+			glTexSubImage2D (target, level, xoffset, yoffset, width, height, format, type, (void*)(uintptr_t)data);
+		}
 
 	}
 
@@ -4392,7 +6636,13 @@ namespace lime {
 	void lime_gl_tex_sub_image_3d (int target, int level, int xoffset, int yoffset, int zoffset, int width, int height, int depth, int format, int type, double data) {
 
 		#ifdef LIME_GLES3_API
-		glTexSubImage3D (target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, (void*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glTexSubImage3D (target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, (void*)(uintptr_t)data);
+			});
+		} else {
+			glTexSubImage3D (target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, (void*)(uintptr_t)data);
+		}
 		#endif
 
 	}
@@ -4401,7 +6651,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_tex_sub_image_3d) (int target, int level, int xoffset, int yoffset, int zoffset, int width, int height, int depth, int format, int type, double data) {
 
 		#ifdef LIME_GLES3_API
-		glTexSubImage3D (target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, (void*)(uintptr_t)data);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				glTexSubImage3D (target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, (void*)(uintptr_t)data);
+			});
+		} else {
+			glTexSubImage3D (target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, (void*)(uintptr_t)data);
+		}
 		#endif
 
 	}
@@ -4411,15 +6667,75 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		GLsizei size = val_array_size (varyings);
-		const char **_varyings = (const char**)alloca (size * sizeof(GLenum));
+		
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			// Deep copy the strings
+			char** _varyings = new char*[size];
+			std::vector<std::string> stringStorage;
+			stringStorage.reserve(size);
+			
+			for (int i = 0; i < size; i++) {
+				stringStorage.push_back(val_string (val_array_i (varyings, i)));
+				_varyings[i] = (char*)stringStorage.back().c_str();
+			}
 
-		for (int i = 0; i < size; i++) {
+			// We need to capture the data. But wait, capturing char** pointing to stack/local memory is dangerous in async.
+			// The PushCommand lambda will execute later.
+			// So we need a way to pass this data safely.
+			// Actually, stringStorage will be destroyed at end of function.
+			// So we must allocate persistent memory and free it in the lambda.
+			
+			// Let's allocate a single block or use a structure.
+			// Simplified approach: Vector of strings is hard to capture by value in lambda if we want C-array of pointers.
+			
+			// Let's create a struct to hold the data
+			struct VaryingsData {
+				int size;
+				char** names;
+				char* buffer; // flat buffer for all strings
+			};
+			
+			// Calculate total size
+			int totalLen = 0;
+			for (int i=0; i<size; i++) {
+				totalLen += strlen(val_string (val_array_i (varyings, i))) + 1;
+			}
+			
+			char* buffer = new char[totalLen];
+			char** names = new char*[size];
+			
+			char* ptr = buffer;
+			for (int i=0; i<size; i++) {
+				const char* src = val_string (val_array_i (varyings, i));
+				int len = strlen(src) + 1;
+				memcpy(ptr, src, len);
+				names[i] = ptr;
+				ptr += len;
+			}
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				// Re-patch pointers if necessary? No, 'buffer' is a pointer, 'names' is a pointer.
+				// But wait, 'names' contains pointers into 'buffer'.
+				// If we capture 'buffer' (the pointer) and 'names' (the pointer), it's fine.
+				// But we need to update 'names' entries to point to 'buffer' if we copied them?
+				// Actually, we allocated 'buffer' on heap, so its address is stable.
+				// 'names' is allocated on heap, its content (pointers to buffer) is stable.
+				
+				glTransformFeedbackVaryings (program, size, (const char**)names, bufferMode);
+				
+				delete[] buffer;
+				delete[] names;
+			});
+			
+		} else {
+			const char **_varyings = (const char**)alloca (size * sizeof(GLenum));
 
-			_varyings[i] = val_string (val_array_i (varyings, i));
+			for (int i = 0; i < size; i++) {
+				_varyings[i] = val_string (val_array_i (varyings, i));
+			}
 
+			glTransformFeedbackVaryings (program, size, _varyings, bufferMode);
 		}
-
-		glTransformFeedbackVaryings (program, size, _varyings, bufferMode);
 		#endif
 
 	}
@@ -4437,56 +6753,124 @@ namespace lime {
 
 	void lime_gl_uniform1f (int location, float v0) {
 
-		glUniform1f (location, v0);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform1f (location, v0);
+			});
+		} else {
+			glUniform1f (location, v0);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_uniform1f) (int location, float v0) {
 
-		glUniform1f (location, v0);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform1f (location, v0);
+			});
+		} else {
+			glUniform1f (location, v0);
+		}
 
 	}
 
 
 	void lime_gl_uniform1fv (int location, int count, double _value) {
 
-		glUniform1fv (location, count, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform1fv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform1fv (location, count, (GLfloat*)(uintptr_t)_value);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_uniform1fv) (int location, int count, double _value) {
 
-		glUniform1fv (location, count, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform1fv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform1fv (location, count, (GLfloat*)(uintptr_t)_value);
+		}
 
 	}
 
 
 	void lime_gl_uniform1i (int location, int v0) {
 
-		glUniform1i (location, v0);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform1i (location, v0);
+			});
+		} else {
+			glUniform1i (location, v0);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_uniform1i) (int location, int v0) {
 
-		glUniform1i (location, v0);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform1i (location, v0);
+			});
+		} else {
+			glUniform1i (location, v0);
+		}
 
 	}
 
 
 	void lime_gl_uniform1iv (int location, int count, double _value) {
 
-		glUniform1iv (location, count, (GLint*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * sizeof(GLint);
+			GLint* dataCopy = new GLint[count];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform1iv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform1iv (location, count, (GLint*)(uintptr_t)_value);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_uniform1iv) (int location, int count, double _value) {
 
-		glUniform1iv (location, count, (GLint*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * sizeof(GLint);
+			GLint* dataCopy = new GLint[count];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform1iv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform1iv (location, count, (GLint*)(uintptr_t)_value);
+		}
 
 	}
 
@@ -4494,7 +6878,13 @@ namespace lime {
 	void lime_gl_uniform1ui (int location, int v0) {
 
 		#ifdef LIME_GLES3_API
-		glUniform1ui (location, v0);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform1ui (location, v0);
+			});
+		} else {
+			glUniform1ui (location, v0);
+		}
 		#endif
 
 	}
@@ -4503,7 +6893,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_uniform1ui) (int location, int v0) {
 
 		#ifdef LIME_GLES3_API
-		glUniform1ui (location, v0);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform1ui (location, v0);
+			});
+		} else {
+			glUniform1ui (location, v0);
+		}
 		#endif
 
 	}
@@ -4512,7 +6908,18 @@ namespace lime {
 	void lime_gl_uniform1uiv (int location, int count, double _value) {
 
 		#ifdef LIME_GLES3_API
-		glUniform1uiv (location, count, (GLuint*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * sizeof(GLuint);
+			GLuint* dataCopy = new GLuint[count];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform1uiv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform1uiv (location, count, (GLuint*)(uintptr_t)_value);
+		}
 		#endif
 
 	}
@@ -4521,7 +6928,18 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_uniform1uiv) (int location, int count, double _value) {
 
 		#ifdef LIME_GLES3_API
-		glUniform1uiv (location, count, (GLuint*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * sizeof(GLuint);
+			GLuint* dataCopy = new GLuint[count];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform1uiv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform1uiv (location, count, (GLuint*)(uintptr_t)_value);
+		}
 		#endif
 
 	}
@@ -4529,56 +6947,124 @@ namespace lime {
 
 	void lime_gl_uniform2f (int location, float v0, float v1) {
 
-		glUniform2f (location, v0, v1);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform2f (location, v0, v1);
+			});
+		} else {
+			glUniform2f (location, v0, v1);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_uniform2f) (int location, float v0, float v1) {
 
-		glUniform2f (location, v0, v1);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform2f (location, v0, v1);
+			});
+		} else {
+			glUniform2f (location, v0, v1);
+		}
 
 	}
 
 
 	void lime_gl_uniform2fv (int location, int count, double _value) {
 
-		glUniform2fv (location, count, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 2 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 2];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform2fv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform2fv (location, count, (GLfloat*)(uintptr_t)_value);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_uniform2fv) (int location, int count, double _value) {
 
-		glUniform2fv (location, count, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 2 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 2];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform2fv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform2fv (location, count, (GLfloat*)(uintptr_t)_value);
+		}
 
 	}
 
 
 	void lime_gl_uniform2i (int location, int v0, int v1) {
 
-		glUniform2i (location, v0, v1);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform2i (location, v0, v1);
+			});
+		} else {
+			glUniform2i (location, v0, v1);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_uniform2i) (int location, int v0, int v1) {
 
-		glUniform2i (location, v0, v1);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform2i (location, v0, v1);
+			});
+		} else {
+			glUniform2i (location, v0, v1);
+		}
 
 	}
 
 
 	void lime_gl_uniform2iv (int location, int count, double _value) {
 
-		glUniform2iv (location, count, (GLint*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 2 * sizeof(GLint);
+			GLint* dataCopy = new GLint[count * 2];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform2iv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform2iv (location, count, (GLint*)(uintptr_t)_value);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_uniform2iv) (int location, int count, double _value) {
 
-		glUniform2iv (location, count, (GLint*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 2 * sizeof(GLint);
+			GLint* dataCopy = new GLint[count * 2];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform2iv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform2iv (location, count, (GLint*)(uintptr_t)_value);
+		}
 
 	}
 
@@ -4613,7 +7099,18 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_uniform2uiv) (int location, int count, double _value) {
 
 		#ifdef LIME_GLES3_API
-		glUniform2uiv (location, count, (GLuint*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 2 * sizeof(GLuint);
+			GLuint* dataCopy = new GLuint[count * 2];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform2uiv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform2uiv (location, count, (GLuint*)(uintptr_t)_value);
+		}
 		#endif
 
 	}
@@ -4621,56 +7118,124 @@ namespace lime {
 
 	void lime_gl_uniform3f (int location, float v0, float v1, float v2) {
 
-		glUniform3f (location, v0, v1, v2);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform3f (location, v0, v1, v2);
+			});
+		} else {
+			glUniform3f (location, v0, v1, v2);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_uniform3f) (int location, float v0, float v1, float v2) {
 
-		glUniform3f (location, v0, v1, v2);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform3f (location, v0, v1, v2);
+			});
+		} else {
+			glUniform3f (location, v0, v1, v2);
+		}
 
 	}
 
 
 	void lime_gl_uniform3fv (int location, int count, double _value) {
 
-		glUniform3fv (location, count, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 3 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 3];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform3fv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform3fv (location, count, (GLfloat*)(uintptr_t)_value);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_uniform3fv) (int location, int count, double _value) {
 
-		glUniform3fv (location, count, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 3 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 3];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform3fv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform3fv (location, count, (GLfloat*)(uintptr_t)_value);
+		}
 
 	}
 
 
 	void lime_gl_uniform3i (int location, int v0, int v1, int v2) {
 
-		glUniform3i (location, v0, v1, v2);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform3i (location, v0, v1, v2);
+			});
+		} else {
+			glUniform3i (location, v0, v1, v2);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_uniform3i) (int location, int v0, int v1, int v2) {
 
-		glUniform3i (location, v0, v1, v2);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform3i (location, v0, v1, v2);
+			});
+		} else {
+			glUniform3i (location, v0, v1, v2);
+		}
 
 	}
 
 
 	void lime_gl_uniform3iv (int location, int count, double _value) {
 
-		glUniform3iv (location, count, (GLint*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 3 * sizeof(GLint);
+			GLint* dataCopy = new GLint[count * 3];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform3iv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform3iv (location, count, (GLint*)(uintptr_t)_value);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_uniform3iv) (int location, int count, double _value) {
 
-		glUniform3iv (location, count, (GLint*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 3 * sizeof(GLint);
+			GLint* dataCopy = new GLint[count * 3];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform3iv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform3iv (location, count, (GLint*)(uintptr_t)_value);
+		}
 
 	}
 
@@ -4678,7 +7243,13 @@ namespace lime {
 	void lime_gl_uniform3ui (int location, int v0, int v1, int v2) {
 
 		#ifdef LIME_GLES3_API
-		glUniform3ui (location, v0, v1, v2);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform3ui (location, v0, v1, v2);
+			});
+		} else {
+			glUniform3ui (location, v0, v1, v2);
+		}
 		#endif
 
 	}
@@ -4696,7 +7267,18 @@ namespace lime {
 	void lime_gl_uniform3uiv (int location, int count, double _value) {
 
 		#ifdef LIME_GLES3_API
-		glUniform3uiv (location, count, (GLuint*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 3 * sizeof(GLuint);
+			GLuint* dataCopy = new GLuint[count * 3];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform3uiv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform3uiv (location, count, (GLuint*)(uintptr_t)_value);
+		}
 		#endif
 
 	}
@@ -4705,7 +7287,18 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_uniform3uiv) (int location, int count, double _value) {
 
 		#ifdef LIME_GLES3_API
-		glUniform3uiv (location, count, (GLuint*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 3 * sizeof(GLuint);
+			GLuint* dataCopy = new GLuint[count * 3];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform3uiv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform3uiv (location, count, (GLuint*)(uintptr_t)_value);
+		}
 		#endif
 
 	}
@@ -4713,56 +7306,124 @@ namespace lime {
 
 	void lime_gl_uniform4f (int location, float v0, float v1, float v2, float v3) {
 
-		glUniform4f (location, v0, v1, v2, v3);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform4f (location, v0, v1, v2, v3);
+			});
+		} else {
+			glUniform4f (location, v0, v1, v2, v3);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_uniform4f) (int location, float v0, float v1, float v2, float v3) {
 
-		glUniform4f (location, v0, v1, v2, v3);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform4f (location, v0, v1, v2, v3);
+			});
+		} else {
+			glUniform4f (location, v0, v1, v2, v3);
+		}
 
 	}
 
 
 	void lime_gl_uniform4fv (int location, int count, double _value) {
 
-		glUniform4fv (location, count, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 4 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 4];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform4fv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform4fv (location, count, (GLfloat*)(uintptr_t)_value);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_uniform4fv) (int location, int count, double _value) {
 
-		glUniform4fv (location, count, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 4 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 4];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform4fv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform4fv (location, count, (GLfloat*)(uintptr_t)_value);
+		}
 
 	}
 
 
 	void lime_gl_uniform4i (int location, int v0, int v1, int v2, int v3) {
 
-		glUniform4i (location, v0, v1, v2, v3);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform4i (location, v0, v1, v2, v3);
+			});
+		} else {
+			glUniform4i (location, v0, v1, v2, v3);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_uniform4i) (int location, int v0, int v1, int v2, int v3) {
 
-		glUniform4i (location, v0, v1, v2, v3);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform4i (location, v0, v1, v2, v3);
+			});
+		} else {
+			glUniform4i (location, v0, v1, v2, v3);
+		}
 
 	}
 
 
 	void lime_gl_uniform4iv (int location, int count, double _value) {
 
-		glUniform4iv (location, count, (GLint*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 4 * sizeof(GLint);
+			GLint* dataCopy = new GLint[count * 4];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform4iv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform4iv (location, count, (GLint*)(uintptr_t)_value);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_uniform4iv) (int location, int count, double _value) {
 
-		glUniform4iv (location, count, (GLint*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 4 * sizeof(GLint);
+			GLint* dataCopy = new GLint[count * 4];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform4iv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform4iv (location, count, (GLint*)(uintptr_t)_value);
+		}
 
 	}
 
@@ -4770,7 +7431,13 @@ namespace lime {
 	void lime_gl_uniform4ui (int location, int v0, int v1, int v2, int v3) {
 
 		#ifdef LIME_GLES3_API
-		glUniform4ui (location, v0, v1, v2, v3);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform4ui (location, v0, v1, v2, v3);
+			});
+		} else {
+			glUniform4ui (location, v0, v1, v2, v3);
+		}
 		#endif
 
 	}
@@ -4779,7 +7446,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_uniform4ui) (int location, int v0, int v1, int v2, int v3) {
 
 		#ifdef LIME_GLES3_API
-		glUniform4ui (location, v0, v1, v2, v3);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform4ui (location, v0, v1, v2, v3);
+			});
+		} else {
+			glUniform4ui (location, v0, v1, v2, v3);
+		}
 		#endif
 
 	}
@@ -4788,7 +7461,18 @@ namespace lime {
 	void lime_gl_uniform4uiv (int location, int count, double _value) {
 
 		#ifdef LIME_GLES3_API
-		glUniform4uiv (location, count, (GLuint*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 4 * sizeof(GLuint);
+			GLuint* dataCopy = new GLuint[count * 4];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform4uiv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform4uiv (location, count, (GLuint*)(uintptr_t)_value);
+		}
 		#endif
 
 	}
@@ -4797,7 +7481,18 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_uniform4uiv) (int location, int count, double _value) {
 
 		#ifdef LIME_GLES3_API
-		glUniform4uiv (location, count, (GLuint*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 4 * sizeof(GLuint);
+			GLuint* dataCopy = new GLuint[count * 4];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniform4uiv (location, count, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniform4uiv (location, count, (GLuint*)(uintptr_t)_value);
+		}
 		#endif
 
 	}
@@ -4806,7 +7501,13 @@ namespace lime {
 	void lime_gl_uniform_block_binding (int program, int uniformBlockIndex, int uniformBlockBinding) {
 
 		#ifdef LIME_GLES3_API
-		glUniformBlockBinding (program, uniformBlockIndex, uniformBlockBinding);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformBlockBinding (program, uniformBlockIndex, uniformBlockBinding);
+			});
+		} else {
+			glUniformBlockBinding (program, uniformBlockIndex, uniformBlockBinding);
+		}
 		#endif
 
 	}
@@ -4815,7 +7516,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_uniform_block_binding) (int program, int uniformBlockIndex, int uniformBlockBinding) {
 
 		#ifdef LIME_GLES3_API
-		glUniformBlockBinding (program, uniformBlockIndex, uniformBlockBinding);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformBlockBinding (program, uniformBlockIndex, uniformBlockBinding);
+			});
+		} else {
+			glUniformBlockBinding (program, uniformBlockIndex, uniformBlockBinding);
+		}
 		#endif
 
 	}
@@ -4823,14 +7530,36 @@ namespace lime {
 
 	void lime_gl_uniform_matrix2fv (int location, int count, bool transpose, double _value) {
 
-		glUniformMatrix2fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 2 * 2 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 2 * 2];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformMatrix2fv (location, count, transpose, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniformMatrix2fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_uniform_matrix2fv) (int location, int count, bool transpose, double _value) {
 
-		glUniformMatrix2fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 2 * 2 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 2 * 2];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformMatrix2fv (location, count, transpose, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniformMatrix2fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		}
 
 	}
 
@@ -4838,7 +7567,18 @@ namespace lime {
 	void lime_gl_uniform_matrix2x3fv (int location, int count, bool transpose, double _value) {
 
 		#ifdef LIME_GLES3_API
-		glUniformMatrix2x3fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 2 * 3 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 2 * 3];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformMatrix2x3fv (location, count, transpose, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniformMatrix2x3fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		}
 		#endif
 
 	}
@@ -4847,7 +7587,18 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_uniform_matrix2x3fv) (int location, int count, bool transpose, double _value) {
 
 		#ifdef LIME_GLES3_API
-		glUniformMatrix2x3fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 2 * 3 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 2 * 3];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformMatrix2x3fv (location, count, transpose, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniformMatrix2x3fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		}
 		#endif
 
 	}
@@ -4856,7 +7607,18 @@ namespace lime {
 	void lime_gl_uniform_matrix2x4fv (int location, int count, bool transpose, double _value) {
 
 		#ifdef LIME_GLES3_API
-		glUniformMatrix2x4fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 2 * 4 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 2 * 4];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformMatrix2x4fv (location, count, transpose, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniformMatrix2x4fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		}
 		#endif
 
 	}
@@ -4865,7 +7627,18 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_uniform_matrix2x4fv) (int location, int count, bool transpose, double _value) {
 
 		#ifdef LIME_GLES3_API
-		glUniformMatrix2x4fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 2 * 4 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 2 * 4];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformMatrix2x4fv (location, count, transpose, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniformMatrix2x4fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		}
 		#endif
 
 	}
@@ -4873,14 +7646,36 @@ namespace lime {
 
 	void lime_gl_uniform_matrix3fv (int location, int count, bool transpose, double _value) {
 
-		glUniformMatrix3fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 3 * 3 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 3 * 3];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformMatrix3fv (location, count, transpose, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniformMatrix3fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_uniform_matrix3fv) (int location, int count, bool transpose, double _value) {
 
-		glUniformMatrix3fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 3 * 3 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 3 * 3];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformMatrix3fv (location, count, transpose, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniformMatrix3fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		}
 
 	}
 
@@ -4888,7 +7683,18 @@ namespace lime {
 	void lime_gl_uniform_matrix3x2fv (int location, int count, bool transpose, double _value) {
 
 		#ifdef LIME_GLES3_API
-		glUniformMatrix3x2fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 3 * 2 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 3 * 2];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformMatrix3x2fv (location, count, transpose, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniformMatrix3x2fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		}
 		#endif
 
 	}
@@ -4897,7 +7703,18 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_uniform_matrix3x2fv) (int location, int count, bool transpose, double _value) {
 
 		#ifdef LIME_GLES3_API
-		glUniformMatrix3x2fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 3 * 2 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 3 * 2];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformMatrix3x2fv (location, count, transpose, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniformMatrix3x2fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		}
 		#endif
 
 	}
@@ -4906,7 +7723,18 @@ namespace lime {
 	void lime_gl_uniform_matrix3x4fv (int location, int count, bool transpose, double _value) {
 
 		#ifdef LIME_GLES3_API
-		glUniformMatrix3x4fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 3 * 4 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 3 * 4];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformMatrix3x4fv (location, count, transpose, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniformMatrix3x4fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		}
 		#endif
 
 	}
@@ -4915,7 +7743,18 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_uniform_matrix3x4fv) (int location, int count, bool transpose, double _value) {
 
 		#ifdef LIME_GLES3_API
-		glUniformMatrix3x4fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 3 * 4 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 3 * 4];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformMatrix3x4fv (location, count, transpose, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniformMatrix3x4fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		}
 		#endif
 
 	}
@@ -4923,14 +7762,37 @@ namespace lime {
 
 	void lime_gl_uniform_matrix4fv (int location, int count, bool transpose, double _value) {
 
-		glUniformMatrix4fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 16;
+			GLfloat* dataCopy = new GLfloat[dataSize];
+			// Ensure we copy the full data. _value is a pointer to the start of the array.
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize * sizeof(GLfloat));
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformMatrix4fv (location, count, transpose, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniformMatrix4fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_uniform_matrix4fv) (int location, int count, bool transpose, double _value) {
 
-		glUniformMatrix4fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 4 * 4 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 4 * 4];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformMatrix4fv (location, count, transpose, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniformMatrix4fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		}
 
 	}
 
@@ -4938,7 +7800,18 @@ namespace lime {
 	void lime_gl_uniform_matrix4x2fv (int location, int count, bool transpose, double _value) {
 
 		#ifdef LIME_GLES3_API
-		glUniformMatrix4x2fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 4 * 2 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 4 * 2];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformMatrix4x2fv (location, count, transpose, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniformMatrix4x2fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		}
 		#endif
 
 	}
@@ -4947,7 +7820,18 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_uniform_matrix4x2fv) (int location, int count, bool transpose, double _value) {
 
 		#ifdef LIME_GLES3_API
-		glUniformMatrix4x2fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 4 * 2 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 4 * 2];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformMatrix4x2fv (location, count, transpose, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniformMatrix4x2fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		}
 		#endif
 
 	}
@@ -4956,7 +7840,18 @@ namespace lime {
 	void lime_gl_uniform_matrix4x3fv (int location, int count, bool transpose, double _value) {
 
 		#ifdef LIME_GLES3_API
-		glUniformMatrix4x3fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 4 * 3 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 4 * 3];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformMatrix4x3fv (location, count, transpose, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniformMatrix4x3fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		}
 		#endif
 
 	}
@@ -4965,7 +7860,18 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_uniform_matrix4x3fv) (int location, int count, bool transpose, double _value) {
 
 		#ifdef LIME_GLES3_API
-		glUniformMatrix4x3fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = count * 4 * 3 * sizeof(GLfloat);
+			GLfloat* dataCopy = new GLfloat[count * 4 * 3];
+			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUniformMatrix4x3fv (location, count, transpose, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glUniformMatrix4x3fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
+		}
 		#endif
 
 	}
@@ -4985,7 +7891,13 @@ namespace lime {
 	HL_PRIM bool HL_NAME(hl_gl_unmap_buffer) (int target) {
 
 		#ifdef LIME_GLES3_API
-		return glUnmapBuffer (target);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			return OpenGLBindings::renderThread->RunCommandAndWait<bool>([=] () {
+				return glUnmapBuffer (target);
+			});
+		} else {
+			return glUnmapBuffer (target);
+		}
 		#else
 		return false;
 		#endif
@@ -4995,28 +7907,52 @@ namespace lime {
 
 	void lime_gl_use_program (int handle) {
 
-		glUseProgram (handle);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUseProgram (handle);
+			});
+		} else {
+			glUseProgram (handle);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_use_program) (int handle) {
 
-		glUseProgram (handle);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glUseProgram (handle);
+			});
+		} else {
+			glUseProgram (handle);
+		}
 
 	}
 
 
 	void lime_gl_validate_program (int handle) {
 
-		glValidateProgram (handle);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glValidateProgram (handle);
+			});
+		} else {
+			glValidateProgram (handle);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_validate_program) (int handle) {
 
-		glValidateProgram (handle);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glValidateProgram (handle);
+			});
+		} else {
+			glValidateProgram (handle);
+		}
 
 	}
 
@@ -5024,7 +7960,13 @@ namespace lime {
 	void lime_gl_vertex_attrib_divisor (int index, int divisor) {
 
 		#ifdef LIME_GLES3_API
-		glVertexAttribDivisor (index, divisor);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttribDivisor (index, divisor);
+			});
+		} else {
+			glVertexAttribDivisor (index, divisor);
+		}
 		#endif
 
 	}
@@ -5033,7 +7975,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_vertex_attrib_divisor) (int index, int divisor) {
 
 		#ifdef LIME_GLES3_API
-		glVertexAttribDivisor (index, divisor);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttribDivisor (index, divisor);
+			});
+		} else {
+			glVertexAttribDivisor (index, divisor);
+		}
 		#endif
 
 	}
@@ -5042,7 +7990,13 @@ namespace lime {
 	void lime_gl_vertex_attrib_ipointer (int index, int size, int type, int stride, double offset) {
 
 		#ifdef LIME_GLES3_API
-		glVertexAttribIPointer (index, size, type, stride, (void*)(uintptr_t)offset);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttribIPointer (index, size, type, stride, (void*)(uintptr_t)offset);
+			});
+		} else {
+			glVertexAttribIPointer (index, size, type, stride, (void*)(uintptr_t)offset);
+		}
 		#endif
 
 	}
@@ -5051,7 +8005,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_vertex_attrib_ipointer) (int index, int size, int type, int stride, double offset) {
 
 		#ifdef LIME_GLES3_API
-		glVertexAttribIPointer (index, size, type, stride, (void*)(uintptr_t)offset);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttribIPointer (index, size, type, stride, (void*)(uintptr_t)offset);
+			});
+		} else {
+			glVertexAttribIPointer (index, size, type, stride, (void*)(uintptr_t)offset);
+		}
 		#endif
 
 	}
@@ -5059,14 +8019,26 @@ namespace lime {
 
 	void lime_gl_vertex_attrib_pointer (int index, int size, int type, bool normalized, int stride, double offset) {
 
-		glVertexAttribPointer (index, size, type, normalized, stride, (void*)(uintptr_t)offset);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttribPointer (index, size, type, normalized, stride, (void*)(uintptr_t)offset);
+			});
+		} else {
+			glVertexAttribPointer (index, size, type, normalized, stride, (void*)(uintptr_t)offset);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_vertex_attrib_pointer) (int index, int size, int type, bool normalized, int stride, double offset) {
 
-		glVertexAttribPointer (index, size, type, normalized, stride, (void*)(uintptr_t)offset);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttribPointer (index, size, type, normalized, stride, (void*)(uintptr_t)offset);
+			});
+		} else {
+			glVertexAttribPointer (index, size, type, normalized, stride, (void*)(uintptr_t)offset);
+		}
 
 	}
 
@@ -5074,7 +8046,13 @@ namespace lime {
 	void lime_gl_vertex_attribi4i (int index, int v0, int v1, int v2, int v3) {
 
 		#ifdef LIME_GLES3_API
-		glVertexAttribI4i (index, v0, v1, v2, v3);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttribI4i (index, v0, v1, v2, v3);
+			});
+		} else {
+			glVertexAttribI4i (index, v0, v1, v2, v3);
+		}
 		#endif
 
 	}
@@ -5083,7 +8061,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_vertex_attribi4i) (int index, int v0, int v1, int v2, int v3) {
 
 		#ifdef LIME_GLES3_API
-		glVertexAttribI4i (index, v0, v1, v2, v3);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttribI4i (index, v0, v1, v2, v3);
+			});
+		} else {
+			glVertexAttribI4i (index, v0, v1, v2, v3);
+		}
 		#endif
 
 	}
@@ -5092,7 +8076,18 @@ namespace lime {
 	void lime_gl_vertex_attribi4iv (int index, double v) {
 
 		#ifdef LIME_GLES3_API
-		glVertexAttribI4iv (index, (GLint*)(uintptr_t)v);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = 4 * sizeof(GLint);
+			GLint* dataCopy = new GLint[4];
+			memcpy(dataCopy, (void*)(uintptr_t)v, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttribI4iv (index, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glVertexAttribI4iv (index, (GLint*)(uintptr_t)v);
+		}
 		#endif
 
 	}
@@ -5101,7 +8096,18 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_vertex_attribi4iv) (int index, double v) {
 
 		#ifdef LIME_GLES3_API
-		glVertexAttribI4iv (index, (GLint*)(uintptr_t)v);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = 4 * sizeof(GLint);
+			GLint* dataCopy = new GLint[4];
+			memcpy(dataCopy, (void*)(uintptr_t)v, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttribI4iv (index, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glVertexAttribI4iv (index, (GLint*)(uintptr_t)v);
+		}
 		#endif
 
 	}
@@ -5110,7 +8116,13 @@ namespace lime {
 	void lime_gl_vertex_attribi4ui (int index, int v0, int v1, int v2, int v3) {
 
 		#ifdef LIME_GLES3_API
-		glVertexAttribI4ui (index, v0, v1, v2, v3);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttribI4ui (index, v0, v1, v2, v3);
+			});
+		} else {
+			glVertexAttribI4ui (index, v0, v1, v2, v3);
+		}
 		#endif
 
 	}
@@ -5119,7 +8131,13 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_vertex_attribi4ui) (int index, int v0, int v1, int v2, int v3) {
 
 		#ifdef LIME_GLES3_API
-		glVertexAttribI4ui (index, v0, v1, v2, v3);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttribI4ui (index, v0, v1, v2, v3);
+			});
+		} else {
+			glVertexAttribI4ui (index, v0, v1, v2, v3);
+		}
 		#endif
 
 	}
@@ -5128,7 +8146,18 @@ namespace lime {
 	void lime_gl_vertex_attribi4uiv (int index, double v) {
 
 		#ifdef LIME_GLES3_API
-		glVertexAttribI4uiv (index, (GLuint*)(uintptr_t)v);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = 4 * sizeof(GLuint);
+			GLuint* dataCopy = new GLuint[4];
+			memcpy(dataCopy, (void*)(uintptr_t)v, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttribI4uiv (index, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glVertexAttribI4uiv (index, (GLuint*)(uintptr_t)v);
+		}
 		#endif
 
 	}
@@ -5137,7 +8166,18 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_vertex_attribi4uiv) (int index, double v) {
 
 		#ifdef LIME_GLES3_API
-		glVertexAttribI4uiv (index, (GLuint*)(uintptr_t)v);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			int dataSize = 4 * sizeof(GLuint);
+			GLuint* dataCopy = new GLuint[4];
+			memcpy(dataCopy, (void*)(uintptr_t)v, dataSize);
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttribI4uiv (index, dataCopy);
+				delete[] dataCopy;
+			});
+		} else {
+			glVertexAttribI4uiv (index, (GLuint*)(uintptr_t)v);
+		}
 		#endif
 
 	}
@@ -5145,126 +8185,266 @@ namespace lime {
 
 	void lime_gl_vertex_attrib1f (int index, float v0) {
 
-		glVertexAttrib1f (index, v0);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttrib1f (index, v0);
+			});
+		} else {
+			glVertexAttrib1f (index, v0);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_vertex_attrib1f) (int index, float v0) {
 
-		glVertexAttrib1f (index, v0);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttrib1f (index, v0);
+			});
+		} else {
+			glVertexAttrib1f (index, v0);
+		}
 
 	}
 
 
 	void lime_gl_vertex_attrib1fv (int index, double v) {
 
-		glVertexAttrib1fv (index, (GLfloat*)(uintptr_t)v);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			GLfloat* vCopy = new GLfloat[1];
+			memcpy(vCopy, (void*)(uintptr_t)v, 1 * sizeof(GLfloat));
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttrib1fv (index, vCopy);
+				delete[] vCopy;
+			});
+		} else {
+			glVertexAttrib1fv (index, (GLfloat*)(uintptr_t)v);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_vertex_attrib1fv) (int index, double v) {
 
-		glVertexAttrib1fv (index, (GLfloat*)(uintptr_t)v);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			GLfloat* vCopy = new GLfloat[1];
+			memcpy(vCopy, (void*)(uintptr_t)v, 1 * sizeof(GLfloat));
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttrib1fv (index, vCopy);
+				delete[] vCopy;
+			});
+		} else {
+			glVertexAttrib1fv (index, (GLfloat*)(uintptr_t)v);
+		}
 
 	}
 
 
 	void lime_gl_vertex_attrib2f (int index, float v0, float v1) {
 
-		glVertexAttrib2f (index, v0, v1);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttrib2f (index, v0, v1);
+			});
+		} else {
+			glVertexAttrib2f (index, v0, v1);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_vertex_attrib2f) (int index, float v0, float v1) {
 
-		glVertexAttrib2f (index, v0, v1);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttrib2f (index, v0, v1);
+			});
+		} else {
+			glVertexAttrib2f (index, v0, v1);
+		}
 
 	}
 
 
 	void lime_gl_vertex_attrib2fv (int index, double v) {
 
-		glVertexAttrib2fv (index, (GLfloat*)(uintptr_t)v);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			GLfloat* vCopy = new GLfloat[2];
+			memcpy(vCopy, (void*)(uintptr_t)v, 2 * sizeof(GLfloat));
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttrib2fv (index, vCopy);
+				delete[] vCopy;
+			});
+		} else {
+			glVertexAttrib2fv (index, (GLfloat*)(uintptr_t)v);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_vertex_attrib2fv) (int index, double v) {
 
-		glVertexAttrib2fv (index, (GLfloat*)(uintptr_t)v);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			GLfloat* vCopy = new GLfloat[2];
+			memcpy(vCopy, (void*)(uintptr_t)v, 2 * sizeof(GLfloat));
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttrib2fv (index, vCopy);
+				delete[] vCopy;
+			});
+		} else {
+			glVertexAttrib2fv (index, (GLfloat*)(uintptr_t)v);
+		}
 
 	}
 
 
 	void lime_gl_vertex_attrib3f (int index, float v0, float v1, float v2) {
 
-		glVertexAttrib3f (index, v0, v1, v2);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttrib3f (index, v0, v1, v2);
+			});
+		} else {
+			glVertexAttrib3f (index, v0, v1, v2);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_vertex_attrib3f) (int index, float v0, float v1, float v2) {
 
-		glVertexAttrib3f (index, v0, v1, v2);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttrib3f (index, v0, v1, v2);
+			});
+		} else {
+			glVertexAttrib3f (index, v0, v1, v2);
+		}
 
 	}
 
 
 	void lime_gl_vertex_attrib3fv (int index, double v) {
 
-		glVertexAttrib3fv (index, (GLfloat*)(uintptr_t)v);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			GLfloat* vCopy = new GLfloat[3];
+			memcpy(vCopy, (void*)(uintptr_t)v, 3 * sizeof(GLfloat));
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttrib3fv (index, vCopy);
+				delete[] vCopy;
+			});
+		} else {
+			glVertexAttrib3fv (index, (GLfloat*)(uintptr_t)v);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_vertex_attrib3fv) (int index, double v) {
 
-		glVertexAttrib3fv (index, (GLfloat*)(uintptr_t)v);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			GLfloat* vCopy = new GLfloat[3];
+			memcpy(vCopy, (void*)(uintptr_t)v, 3 * sizeof(GLfloat));
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttrib3fv (index, vCopy);
+				delete[] vCopy;
+			});
+		} else {
+			glVertexAttrib3fv (index, (GLfloat*)(uintptr_t)v);
+		}
 
 	}
 
 
 	void lime_gl_vertex_attrib4f (int index, float v0, float v1, float v2, float v3) {
 
-		glVertexAttrib4f (index, v0, v1, v2, v3);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttrib4f (index, v0, v1, v2, v3);
+			});
+		} else {
+			glVertexAttrib4f (index, v0, v1, v2, v3);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_vertex_attrib4f) (int index, float v0, float v1, float v2, float v3) {
 
-		glVertexAttrib4f (index, v0, v1, v2, v3);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttrib4f (index, v0, v1, v2, v3);
+			});
+		} else {
+			glVertexAttrib4f (index, v0, v1, v2, v3);
+		}
 
 	}
 
 
 	void lime_gl_vertex_attrib4fv (int index, double v) {
 
-		glVertexAttrib4fv (index, (GLfloat*)(uintptr_t)v);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			GLfloat* vCopy = new GLfloat[4];
+			memcpy(vCopy, (void*)(uintptr_t)v, 4 * sizeof(GLfloat));
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttrib4fv (index, vCopy);
+				delete[] vCopy;
+			});
+		} else {
+			glVertexAttrib4fv (index, (GLfloat*)(uintptr_t)v);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_vertex_attrib4fv) (int index, double v) {
 
-		glVertexAttrib4fv (index, (GLfloat*)(uintptr_t)v);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			GLfloat* vCopy = new GLfloat[4];
+			memcpy(vCopy, (void*)(uintptr_t)v, 4 * sizeof(GLfloat));
+			
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glVertexAttrib4fv (index, vCopy);
+				delete[] vCopy;
+			});
+		} else {
+			glVertexAttrib4fv (index, (GLfloat*)(uintptr_t)v);
+		}
 
 	}
 
 
 	void lime_gl_viewport (int x, int y, int width, int height) {
 
-		glViewport (x, y, width, height);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glViewport (x, y, width, height);
+			});
+		} else {
+			glViewport (x, y, width, height);
+		}
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_viewport) (int x, int y, int width, int height) {
 
-		glViewport (x, y, width, height);
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			OpenGLBindings::renderThread->PushCommand ([=] () {
+				glViewport (x, y, width, height);
+			});
+		} else {
+			glViewport (x, y, width, height);
+		}
 
 	}
 
@@ -5893,6 +9073,22 @@ namespace lime {
 	DEFINE_HL_PRIM (_VOID, hl_gl_viewport, _I32 _I32 _I32 _I32);
 	DEFINE_HL_PRIM (_VOID, hl_gl_wait_sync, _TCFFIPOINTER _I32 _I32 _I32);
 
+
+	void lime_gl_set_multithreaded (bool enabled) {
+
+		OpenGLBindings::SetMultiThreaded (enabled);
+
+	}
+
+
+	HL_PRIM void HL_NAME(hl_gl_set_multithreaded) (bool enabled) {
+
+		OpenGLBindings::SetMultiThreaded (enabled);
+
+	}
+
+	DEFINE_PRIME1v (lime_gl_set_multithreaded);
+	DEFINE_HL_PRIM (_VOID, hl_gl_set_multithreaded, _BOOL);
 
 }
 

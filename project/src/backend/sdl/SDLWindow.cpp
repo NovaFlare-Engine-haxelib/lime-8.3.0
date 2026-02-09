@@ -3,6 +3,7 @@
 #include "SDLApplication.h"
 #include "../../graphics/opengl/OpenGL.h"
 #include "../../graphics/opengl/OpenGLBindings.h"
+#include <future>
 
 #ifdef HX_WINDOWS
 #include <SDL_syswm.h>
@@ -219,50 +220,82 @@ namespace lime {
 
 			context = SDL_GL_CreateContext (sdlWindow);
 
-			if (context && SDL_GL_MakeCurrent (sdlWindow, context) == 0) {
+			if (context) {
 
-				if (flags & WINDOW_FLAG_VSYNC) {
+				// IMPORTANT: Bind RenderThread immediately before any GL logic starts
+				printf("[SDLWindow] Binding RenderThread...\n");
+				OpenGLBindings::BindRenderThread(&renderThread);
+				
+				SDL_GL_MakeCurrent (sdlWindow, NULL);
+				printf("[SDLWindow] Main thread released context. Starting RenderThread...\n");
+				renderThread.Start (sdlWindow, context);
 
-					SDL_GL_SetSwapInterval (1);
+				// Wait for thread to be actually running and context current
+				// renderThread.RunCommandAndWait<void>([](){
+				// 	printf("[RenderThread] Sync barrier reached. Thread is ready.\n");
+				// });
+				
+				std::promise<bool> initPromise;
+				auto initFuture = initPromise.get_future ();
 
+				renderThread.PushCommand ([&] () {
+					bool success = true;
+
+					if (flags & WINDOW_FLAG_VSYNC) {
+
+						SDL_GL_SetSwapInterval (1);
+
+					} else {
+
+						SDL_GL_SetSwapInterval (0);
+
+					}
+
+					OpenGLBindings::Init ();
+
+					#ifndef LIME_GLES
+
+					int version = 0;
+					glGetIntegerv (GL_MAJOR_VERSION, &version);
+
+					if (version == 0) {
+
+						float versionScan = 0;
+						sscanf ((const char*)glGetString (GL_VERSION), "%f", &versionScan);
+						version = versionScan;
+
+					}
+
+					if (version < 2 && !strstr ((const char*)glGetString (GL_VERSION), "OpenGL ES")) {
+
+						success = false;
+
+					}
+
+					#elif defined(IPHONE) || defined(APPLETV)
+
+					glGetIntegerv (GL_FRAMEBUFFER_BINDING, &OpenGLBindings::defaultFramebuffer);
+					glGetIntegerv (GL_RENDERBUFFER_BINDING, &OpenGLBindings::defaultRenderbuffer);
+
+					#endif
+
+					initPromise.set_value (success);
+
+				});
+				
+				renderThread.Flip();
+
+				// Use wait_for to check status without blocking indefinitely
+				if (initFuture.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {
+					printf("Init timed out! Potential deadlock.\n");
+					// Fallback or exit?
 				} else {
-
-					SDL_GL_SetSwapInterval (0);
-
+					if (!initFuture.get ()) {
+						renderThread.Stop ();
+						SDL_GL_DeleteContext (context);
+						context = NULL;
+					}
 				}
-
-				OpenGLBindings::Init ();
-
-				#ifndef LIME_GLES
-
-				int version = 0;
-				glGetIntegerv (GL_MAJOR_VERSION, &version);
-
-				if (version == 0) {
-
-					float versionScan = 0;
-					sscanf ((const char*)glGetString (GL_VERSION), "%f", &versionScan);
-					version = versionScan;
-
-				}
-
-				if (version < 2 && !strstr ((const char*)glGetString (GL_VERSION), "OpenGL ES")) {
-
-					SDL_GL_DeleteContext (context);
-					context = 0;
-
-				}
-
-				#elif defined(IPHONE) || defined(APPLETV)
-
-				// SDL_SysWMinfo windowInfo;
-				// SDL_GetWindowWMInfo (sdlWindow, &windowInfo);
-				// OpenGLBindings::defaultFramebuffer = windowInfo.info.uikit.framebuffer;
-				// OpenGLBindings::defaultRenderbuffer = windowInfo.info.uikit.colorbuffer;
-				glGetIntegerv (GL_FRAMEBUFFER_BINDING, &OpenGLBindings::defaultFramebuffer);
-				glGetIntegerv (GL_RENDERBUFFER_BINDING, &OpenGLBindings::defaultRenderbuffer);
-
-				#endif
 
 			} else {
 
@@ -298,6 +331,8 @@ namespace lime {
 
 
 	SDLWindow::~SDLWindow () {
+
+		renderThread.Stop ();
 
 		if (sdlWindow) {
 
@@ -383,7 +418,14 @@ namespace lime {
 
 		if (context && !sdlRenderer) {
 
-			SDL_GL_SwapWindow (sdlWindow);
+			if (renderThread.IsRunning()) {
+			renderThread.PushCommand ([this] () {
+				SDL_GL_SwapWindow (sdlWindow);
+			});
+			renderThread.Flip();
+		} else {
+				SDL_GL_SwapWindow (sdlWindow);
+			}
 
 		} else if (sdlRenderer) {
 
@@ -481,6 +523,12 @@ namespace lime {
 
 	void SDLWindow::ContextMakeCurrent () {
 
+		// If render thread is running, DO NOT allow main thread to steal context
+		if (renderThread.IsRunning()) {
+			//printf("[SDLWindow] ContextMakeCurrent ignored on main thread because RenderThread is running.\n");
+			return;
+		}
+
 		if (sdlWindow && context) {
 
 			SDL_GL_MakeCurrent (sdlWindow, context);
@@ -491,6 +539,12 @@ namespace lime {
 
 
 	void SDLWindow::ContextMakeCurrent (void* context) {
+
+		// If render thread is running, DO NOT allow main thread to steal context
+		if (renderThread.IsRunning()) {
+			// printf("[SDLWindow] ContextMakeCurrent(ptr) ignored on main thread because RenderThread is running.\n");
+			return;
+		}
 
 		if (sdlWindow && context) {
 

@@ -1,6 +1,7 @@
 <xml>
 
 	<set name="HXCPP_CPP11" value="1" />
+	<!-- <set name="HXCPP_TRACY" value="0" /> -->
 
 	<include name="${HXCPP}/build-tool/BuildCommon.xml" />
 
@@ -55,6 +56,12 @@
 		<!-- setting HXCPP_CPP11 doesn't seem to apply to .mm files -->
         <compilerflag value="-std=c++11" unless="isMsvc" />
 		<compilerflag value="-Iinclude" />
+
+		<section if="HXCPP_TRACY">
+			<compilerflag value="-I${HXCPP}/project/thirdparty/tracy-0.12.0" />
+
+			<compilerflag value="-DTRACY_ON_DEMAND" if="HXCPP_TRACY_ON_DEMAND" />
+		</section>
 
 		<file name="src/ExternalInterface.cpp" />
 
@@ -302,6 +309,9 @@
 		<file name="src/graphics/Image.cpp" />
 		<file name="src/graphics/ImageBuffer.cpp" />
 		<file name="src/graphics/RenderEvent.cpp" />
+		<file name="src/graphics/RenderThread.cpp" />
+		<file name="src/graphics/SharedBufferManager.cpp" />
+		<file name="src/graphics/PerformanceMonitor.cpp" />
 		<file name="src/graphics/utils/ImageDataUtil.cpp" />
 		<file name="src/hx/CFFIExt.cpp" />
 		<file name="src/math/ColorMatrix.cpp" />

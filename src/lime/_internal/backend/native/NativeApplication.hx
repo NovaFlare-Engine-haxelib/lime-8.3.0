@@ -114,7 +114,6 @@ class NativeApplication
 			pauseTimer = -1;
 		}
 		#end
-		lastUpdate = System.getTimerNano();
 	}
 
 	public function exec():Int
@@ -189,6 +188,13 @@ class NativeApplication
 		return cast NativeCFFI.lime_system_get_device_orientation();
 		#else
 		return UNKNOWN;
+		#end
+	}
+
+	public function setRenderFrameRate(frameRate:Float):Void
+	{
+		#if (!macro && lime_cffi)
+		NativeCFFI.lime_application_set_render_frame_rate(handle, frameRate);
 		#end
 	}
 
@@ -415,17 +421,19 @@ class NativeApplication
 				case RENDER:
 					if (window.context != null)
 					{
-						window.onlyUpdate.dispatch();
+						window.__backend.render();
+						window.onRender.dispatch(window.context);
 
-						if (drawCheck(window)) {
-							window.__backend.render();
-							window.onRender.dispatch(window.context);
-
-							if (!window.onRender.canceled)
-							{
-								window.__backend.contextFlip();
-							}
+						if (!window.onRender.canceled)
+						{
+							window.__backend.contextFlip();
 						}
+					}
+				
+				case RENDER_UPDATE:
+					if (window.context != null)
+					{
+						window.onlyUpdate.dispatch();
 					}
 
 				case RENDER_CONTEXT_LOST:
@@ -459,46 +467,7 @@ class NativeApplication
 		}
 	}
 
-	private var lastUpdate:Float = 0; //上一帧更新时间，单位毫秒
-	private var currentUpdate:Float = 0; //当前帧更新时间，单位毫秒
-
-	private var framePeriod:Float = 0; //帧周期，单位毫秒
-	private var accumulator:Float = 0; //累加器，单位毫秒
-	private var realDeltaTime:Float = 0; //实际时间间隔，单位毫秒
 	private var forceDrawOnce:Bool = false;
-	private var devMode:Bool = false;
-	private function drawCheck(window:Window):Bool
-	{
-		if (forceDrawOnce) {
-			forceDrawOnce = false;
-			window.isFullFrame = true;
-			return true;
-		}
-		if (window.frameRate <= window.drawFrameRate || !window.splitUpdate) {
-			window.isFullFrame = true;
-			return true;
-		}
-		//如果设置的更新帧率小于屏幕刷新率，就直接绘制
-
-		framePeriod = (1000 / window.drawFrameRate); //前面已经检测了当前设置更新帧率比屏幕刷新率高
-
-		currentUpdate = System.getTimerNano(); //当前帧更新时间
-
-		if (currentUpdate - lastUpdate >= framePeriod - 0.5) {
-			var delta = currentUpdate - lastUpdate;
-			if (delta < framePeriod) {
-				lastUpdate += framePeriod;
-			} else {
-				lastUpdate += Math.floor(delta / framePeriod) * framePeriod;
-			}
-			//trace('normal update');
-			window.isFullFrame = true;
-			return true;
-		}
-
-		window.isFullFrame = false;
-		return false;
-	}
 
 	private function handleSensorEvent():Void
 	{
@@ -958,6 +927,7 @@ class NativeApplication
 	var RENDER = 0;
 	var RENDER_CONTEXT_LOST = 1;
 	var RENDER_CONTEXT_RESTORED = 2;
+	var RENDER_UPDATE = 3;
 }
 
 @:keep /*private*/ class SensorEventInfo

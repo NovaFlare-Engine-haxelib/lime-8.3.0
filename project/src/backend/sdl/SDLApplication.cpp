@@ -36,11 +36,15 @@ namespace lime {
 	const int analogAxisDeadZone = 1000;
 	static std::map<int, std::map<int, int>> gamepadsAxisMap;
 	static double accumulator = 0.0;
+	static double accumulatorRender = 0.0;
 	bool inBackground = false;
 	static uint64_t perfFreq = 0;
 	static uint64_t lastPerfCounter = 0;
 	static uint64_t nextPerfCounter = 0;
 	static uint64_t periodPerfTicks = 0;
+	static uint64_t lastRenderPerfCounter = 0;
+	static uint64_t nextRenderPerfCounter = 0;
+	static uint64_t periodRenderPerfTicks = 0;
 	static bool hrInit = false;
 
 
@@ -61,6 +65,8 @@ namespace lime {
 
 		currentApplication = this;
 		framePeriod = 1000.0 / 60.0;
+		renderFramePeriod = 1000.0 / 60.0;
+		splitUpdate = false;
 
 		currentUpdate = 0;
 		lastUpdate = 0;
@@ -164,25 +170,62 @@ namespace lime {
 						lastPerfCounter = SDL_GetPerformanceCounter ();
 						periodPerfTicks = (uint64_t)(framePeriod * (double)perfFreq / 1000.0);
 						nextPerfCounter = lastPerfCounter + periodPerfTicks;
+						lastRenderPerfCounter = lastPerfCounter;
+						periodRenderPerfTicks = (uint64_t)(renderFramePeriod * (double)perfFreq / 1000.0);
+						nextRenderPerfCounter = lastRenderPerfCounter + periodRenderPerfTicks;
 						hrInit = true;
 					}
+
 					uint64_t nowPerf = SDL_GetPerformanceCounter ();
-					double realDeltaTime = (double)(nowPerf - lastPerfCounter) * 1000.0 / (double)perfFreq;
-					const double MAX_DELTA_TIME = 10 * framePeriod;
-					if (realDeltaTime < 0) realDeltaTime = 0;
-					if (realDeltaTime > MAX_DELTA_TIME) realDeltaTime = MAX_DELTA_TIME;
-					accumulator += realDeltaTime;
-					if (accumulator >= framePeriod) {
-						lastPerfCounter = nowPerf;
-						lastUpdate = (double)nowPerf * 1000.0 / (double)perfFreq;
 
-						applicationEvent.type = UPDATE;
-						applicationEvent.deltaTime = realDeltaTime;
-						ApplicationEvent::Dispatch (&applicationEvent);
-						RenderEvent::Dispatch (&renderEvent);
+					if (event->user.code == 1) { // Render
 
-						accumulator -= framePeriod;
-						if (accumulator > framePeriod * 2) accumulator = 0;
+						if (splitUpdate) {
+							double realDeltaTime = (double)(nowPerf - lastRenderPerfCounter) * 1000.0 / (double)perfFreq;
+							const double MAX_DELTA_TIME = 10 * renderFramePeriod;
+							if (realDeltaTime < 0) realDeltaTime = 0;
+							if (realDeltaTime > MAX_DELTA_TIME) realDeltaTime = MAX_DELTA_TIME;
+							accumulatorRender += realDeltaTime;
+
+							if (accumulatorRender >= renderFramePeriod) {
+								lastRenderPerfCounter = nowPerf;
+
+								renderEvent.type = RENDER;
+								RenderEvent::Dispatch (&renderEvent);
+
+								accumulatorRender -= renderFramePeriod;
+								if (accumulatorRender > renderFramePeriod * 2) accumulatorRender = 0;
+							}
+						}
+
+					} else { // Update
+
+						double realDeltaTime = (double)(nowPerf - lastPerfCounter) * 1000.0 / (double)perfFreq;
+						const double MAX_DELTA_TIME = 10 * framePeriod;
+						if (realDeltaTime < 0) realDeltaTime = 0;
+						if (realDeltaTime > MAX_DELTA_TIME) realDeltaTime = MAX_DELTA_TIME;
+						accumulator += realDeltaTime;
+
+						if (accumulator >= framePeriod) {
+							lastPerfCounter = nowPerf;
+							lastUpdate = (double)nowPerf * 1000.0 / (double)perfFreq;
+
+							renderEvent.type = RENDER_UPDATE;
+							RenderEvent::Dispatch (&renderEvent);
+
+							applicationEvent.type = UPDATE;
+							applicationEvent.deltaTime = realDeltaTime;
+							ApplicationEvent::Dispatch (&applicationEvent);
+
+							if (!splitUpdate) {
+								renderEvent.type = RENDER;
+								RenderEvent::Dispatch (&renderEvent);
+							}
+
+							accumulator -= framePeriod;
+							if (accumulator > framePeriod * 2) accumulator = 0;
+						}
+
 					}
 				}
 				
@@ -391,6 +434,8 @@ namespace lime {
 		uint64_t now = SDL_GetPerformanceCounter ();
 		lastPerfCounter = now;
 		nextPerfCounter = now + periodPerfTicks;
+		lastRenderPerfCounter = now;
+		nextRenderPerfCounter = now + periodRenderPerfTicks;
 		
 		double nowMs = (double)now * 1000.0 / (double)perfFreq;
 		lastUpdate = nowMs;
@@ -915,6 +960,35 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 	}
 
 
+	void SDLApplication::SetRenderFrameRate (double frameRate) {
+
+		accumulatorRender = 0.0;
+
+		if (frameRate > 0) {
+
+			renderFramePeriod = 1000.0 / frameRate;
+			if (perfFreq) periodRenderPerfTicks = (uint64_t)(renderFramePeriod * (double)perfFreq / 1000.0);
+
+		} else {
+
+			renderFramePeriod = 1000.0;
+			if (perfFreq) periodRenderPerfTicks = (uint64_t)(renderFramePeriod * (double)perfFreq / 1000.0);
+
+		}
+
+	}
+
+
+	void SDLApplication::SetSplitUpdate (bool split) {
+
+		splitUpdate = split;
+		if (split) {
+			accumulatorRender = 0;
+		}
+
+	}
+
+
 	static SDL_TimerID timerID = 0;
 	bool timerActive = false;
 	bool firstTime = true;
@@ -993,7 +1067,10 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 			}
 
 		#else
-			if (nowPerf >= nextPerfCounter) {
+			bool updatePending = (nowPerf >= nextPerfCounter);
+			bool renderPending = splitUpdate && (nowPerf >= nextRenderPerfCounter);
+
+			if (updatePending) {
 				SDL_Event ev;
 				ev.type = SDL_USEREVENT;
 				ev.user.code = 0;
@@ -1006,12 +1083,32 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 				if (nextPerfCounter + periodPerfTicks < nowPerf) {
 					nextPerfCounter = nowPerf + periodPerfTicks;
 				}
-			} else {
-				uint64_t remainingTicks = nextPerfCounter - nowPerf;
-				if (remainingTicks > perfFreq / 500) {
-					SDL_Delay (1);
-				} else {
-					LIME_PAUSE();
+			}
+
+			if (renderPending) {
+				SDL_Event ev;
+				ev.type = SDL_USEREVENT;
+				ev.user.code = 1;
+				ev.user.data1 = NULL;
+				ev.user.data2 = NULL;
+				
+				HandleEvent (&ev);
+				
+				nextRenderPerfCounter += periodRenderPerfTicks;
+				if (nextRenderPerfCounter + periodRenderPerfTicks < nowPerf) {
+					nextRenderPerfCounter = nowPerf + periodRenderPerfTicks;
+				}
+			}
+
+			if (!updatePending && (!renderPending || !splitUpdate)) {
+				uint64_t nextEventCounter = (nextPerfCounter < nextRenderPerfCounter) ? nextPerfCounter : nextRenderPerfCounter;
+				if (nextEventCounter > nowPerf) {
+					uint64_t remainingTicks = nextEventCounter - nowPerf;
+					if (remainingTicks > perfFreq / 500) {
+						SDL_Delay (1);
+					} else {
+						LIME_PAUSE();
+					}
 				}
 			}
 		}

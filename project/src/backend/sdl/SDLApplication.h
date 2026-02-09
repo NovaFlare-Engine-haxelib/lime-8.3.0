@@ -34,6 +34,8 @@ namespace lime {
 			virtual void Init ();
 			virtual int Quit ();
 			virtual void SetFrameRate (double frameRate);
+			virtual void SetRenderFrameRate (double frameRate);
+			virtual void SetSplitUpdate (bool split);
 			virtual bool Update ();
 
 			void RegisterWindow (SDLWindow *window);
@@ -62,10 +64,12 @@ namespace lime {
 			static SDLApplication* currentApplication;
 
 			bool active;
+			bool splitUpdate;
 			ApplicationEvent applicationEvent;
 			ClipboardEvent clipboardEvent;
 			double currentUpdate;
 			double framePeriod;
+			double renderFramePeriod;
 			Uint32 initFlags;
 			DropEvent dropEvent;
 			GamepadEvent gamepadEvent;

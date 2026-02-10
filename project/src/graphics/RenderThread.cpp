@@ -15,7 +15,7 @@ namespace lime {
     std::atomic<int> RenderThread::activePendingFrames(0);
     std::atomic<bool> RenderThread::hasPendingRenderRequest(false);
 
-    RenderThread::RenderThread() : window(nullptr), context(nullptr), workerThread(nullptr), running(false), maxPendingFrames(1) {
+    RenderThread::RenderThread() : window(nullptr), context(nullptr), workerThread(nullptr), running(false), paused(false), maxPendingFrames(1) {
         currentFrame.reserve(4096);
     } 
 
@@ -36,6 +36,7 @@ namespace lime {
         { 
             std::lock_guard<std::mutex> lock(mutex); 
             running = false; 
+            paused = false;
         } 
         condition.notify_all(); 
         
@@ -52,6 +53,37 @@ namespace lime {
         std::lock_guard<std::mutex> lock(mutex); 
         currentFrame.push_back(std::move(command));
     } 
+
+    void RenderThread::Pause() {
+        if (!running || paused) return;
+        
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            paused = true;
+        }
+        condition.notify_all();
+    }
+
+    void RenderThread::Resume() {
+        if (!running || !paused) return;
+        
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            paused = false;
+        }
+        condition.notify_all();
+    }
+
+    void RenderThread::RebindContext() {
+        PushCommand([this]() {
+            if (window && context) {
+                //printf("[RenderThread] Rebinding context...\n");
+                // Force unbind then bind to ensure Surface is updated
+                SDL_GL_MakeCurrent(window, NULL);
+                SDL_GL_MakeCurrent(window, context);
+            }
+        });
+    }
 
     void RenderThread::Flip() {
         std::unique_lock<std::mutex> lock(mutex);
@@ -91,13 +123,31 @@ namespace lime {
             #ifdef HXCPP_TRACY
             ZoneScopedN("Render Loop");
             #endif
+
+            if (paused) {
+                
+                {
+                    std::unique_lock<std::mutex> lock(mutex);
+                    condition.wait(lock, [this] { return !paused || !running; });
+                }
+
+                if (!running) break;
+
+                // When resumed, re-bind the context to ensure we target the correct surface
+                // This is crucial for Android where the surface might have been recreated
+                if (window && context) {
+                    SDL_GL_MakeCurrent(window, context);
+                }
+            }
             
             std::vector<std::function<void()>> frame;
 
             { 
                 std::unique_lock<std::mutex> lock(mutex); 
-                condition.wait(lock, [this] { return !frameQueue.empty() || !running; }); 
+                condition.wait(lock, [this] { return !frameQueue.empty() || !running || paused; }); 
                 
+                if (paused) continue;
+
                 if (!running && frameQueue.empty()) break; 
                 
                 if (!frameQueue.empty()) {

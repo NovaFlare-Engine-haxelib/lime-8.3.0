@@ -15,6 +15,24 @@
 namespace lime {
 
 
+    std::vector<SDLWindow*> SDLWindow::windows;
+
+    void SDLWindow::PauseRendering() {
+        //printf("SDLWindow::PauseRendering\n");
+        for (auto window : windows) {
+            window->renderThread.Pause();
+        }
+    }
+
+    void SDLWindow::ResumeRendering() {
+        //printf("SDLWindow::ResumeRendering\n");
+        for (auto window : windows) {
+            //window->renderThread.Resume();
+            window->renderThread.RebindContext();
+        }
+    }
+
+
 	static Cursor currentCursor = DEFAULT;
 
 	SDL_Cursor* SDLCursor::arrowCursor = 0;
@@ -43,6 +61,7 @@ namespace lime {
 
 		currentApplication = application;
 		this->flags = flags;
+		windows.push_back(this);
 
 		int sdlWindowFlags = 0;
 
@@ -223,17 +242,10 @@ namespace lime {
 			if (context) {
 
 				// IMPORTANT: Bind RenderThread immediately before any GL logic starts
-				printf("[SDLWindow] Binding RenderThread...\n");
 				OpenGLBindings::BindRenderThread(&renderThread);
 				
 				SDL_GL_MakeCurrent (sdlWindow, NULL);
-				printf("[SDLWindow] Main thread released context. Starting RenderThread...\n");
 				renderThread.Start (sdlWindow, context);
-
-				// Wait for thread to be actually running and context current
-				// renderThread.RunCommandAndWait<void>([](){
-				// 	printf("[RenderThread] Sync barrier reached. Thread is ready.\n");
-				// });
 				
 				std::promise<bool> initPromise;
 				auto initFuture = initPromise.get_future ();
@@ -287,7 +299,6 @@ namespace lime {
 
 				// Use wait_for to check status without blocking indefinitely
 				if (initFuture.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {
-					printf("Init timed out! Potential deadlock.\n");
 					// Fallback or exit?
 				} else {
 					if (!initFuture.get ()) {
@@ -331,6 +342,17 @@ namespace lime {
 
 
 	SDLWindow::~SDLWindow () {
+
+		for (size_t i = 0; i < windows.size (); i++) {
+
+			if (windows[i] == this) {
+
+				windows.erase (windows.begin () + i);
+				break;
+
+			}
+
+		}
 
 		renderThread.Stop ();
 

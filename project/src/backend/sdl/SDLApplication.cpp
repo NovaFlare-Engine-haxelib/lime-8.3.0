@@ -1,4 +1,5 @@
 #include "SDLApplication.h"
+#include "SDLWindow.h"
 #include "SDLGamepad.h"
 #include "SDLJoystick.h"
 #include <graphics/RenderThread.h>
@@ -244,6 +245,7 @@ namespace lime {
 			case SDL_APP_WILLENTERBACKGROUND:
 
 				inBackground = true;
+				//SDLWindow::PauseRendering();
 
 				windowEvent.type = WINDOW_DEACTIVATE;
 				WindowEvent::Dispatch (&windowEvent);
@@ -255,6 +257,7 @@ namespace lime {
 
 			case SDL_APP_DIDENTERFOREGROUND:
 
+				SDLWindow::ResumeRendering();
 				windowEvent.type = WINDOW_ACTIVATE;
 				WindowEvent::Dispatch (&windowEvent);
 

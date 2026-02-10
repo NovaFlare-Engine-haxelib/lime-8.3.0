@@ -67,6 +67,10 @@ namespace lime {
 			SDL_Window* sdlWindow;
 			RenderThread renderThread;
 
+			static std::vector<SDLWindow*> windows;
+			static void PauseRendering();
+			static void ResumeRendering();
+
 		private:
 
 			SDL_GLContext context;

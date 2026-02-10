@@ -20,6 +20,9 @@ namespace lime {
 
         void Start(SDL_Window* window, SDL_GLContext context);
         void Stop();
+        void Pause();
+        void Resume();
+        void RebindContext();
         
         void PushCommand(std::function<void()> command);
         void Flip();
@@ -75,6 +78,7 @@ namespace lime {
         SDL_GLContext context;
         std::thread* workerThread;
         std::atomic<bool> running;
+        std::atomic<bool> paused;
         
         std::condition_variable condition;
         std::mutex mutex;

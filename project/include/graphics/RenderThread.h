@@ -46,26 +46,6 @@ namespace lime {
             return result;
         }
 
-        template<>
-        void RunCommandAndWait<void>(std::function<void()> command) {
-             if (IsRenderThread()) {
-                command();
-                return;
-            }
-            //printf("[RenderThread] RunCommandAndWait: Pushing command...\n"); fflush(stdout);
-            std::promise<void> promise;
-            std::future<void> future = promise.get_future();
-            PushCommand([&]() {
-                command();
-                promise.set_value();
-            });
-            //printf("[RenderThread] RunCommandAndWait: Calling Flip...\n"); fflush(stdout);
-            Flip();
-            //printf("[RenderThread] RunCommandAndWait: Waiting for future...\n"); fflush(stdout);
-            future.get();
-            //printf("[RenderThread] RunCommandAndWait: Done.\n"); fflush(stdout);
-        }
-
         bool IsRenderThread();
         bool IsRunning() { return running; }
         
@@ -89,6 +69,26 @@ namespace lime {
         
         std::thread::id threadId;
     };
+
+    template<>
+    inline void RenderThread::RunCommandAndWait<void>(std::function<void()> command) {
+         if (IsRenderThread()) {
+            command();
+            return;
+        }
+        //printf("[RenderThread] RunCommandAndWait: Pushing command...\n"); fflush(stdout);
+        std::promise<void> promise;
+        std::future<void> future = promise.get_future();
+        PushCommand([&]() {
+            command();
+            promise.set_value();
+        });
+        //printf("[RenderThread] RunCommandAndWait: Calling Flip...\n"); fflush(stdout);
+        Flip();
+        //printf("[RenderThread] RunCommandAndWait: Waiting for future...\n"); fflush(stdout);
+        future.get();
+        //printf("[RenderThread] RunCommandAndWait: Done.\n"); fflush(stdout);
+    }
 
 }
 

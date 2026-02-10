@@ -12,7 +12,10 @@
 
 namespace lime { 
 
-    RenderThread::RenderThread() : window(nullptr), context(nullptr), workerThread(nullptr), running(false), maxPendingFrames(3) {
+    std::atomic<int> RenderThread::activePendingFrames(0);
+    std::atomic<bool> RenderThread::hasPendingRenderRequest(false);
+
+    RenderThread::RenderThread() : window(nullptr), context(nullptr), workerThread(nullptr), running(false), maxPendingFrames(1) {
         currentFrame.reserve(4096);
     } 
 
@@ -53,18 +56,11 @@ namespace lime {
     void RenderThread::Flip() {
         std::unique_lock<std::mutex> lock(mutex);
         
-        // Wait if we are too far ahead (throttling)
-        // Use wait_for to avoid deadlocks if RenderThread is waiting for MainThread (e.g. SwapBuffers on Windows)
-        if (frameQueue.size() >= maxPendingFrames && running) {
-            condition.wait_for(lock, std::chrono::milliseconds(2), [this] { 
-                return frameQueue.size() < maxPendingFrames || !running; 
-            });
-        }
-        
         if (!running) return;
 
         if (!currentFrame.empty()) {
             frameQueue.push_back(std::move(currentFrame));
+            activePendingFrames++;
             
             // Prepare next frame
             currentFrame = std::vector<std::function<void()>>();
@@ -121,6 +117,23 @@ namespace lime {
                     }
                 }
                 frame.clear();
+                
+                activePendingFrames--;
+
+                if (hasPendingRenderRequest) {
+                    hasPendingRenderRequest = false;
+                    
+                    SDL_Event event;
+                    SDL_UserEvent userevent;
+                    userevent.type = SDL_USEREVENT;
+                    userevent.code = 1; // 1 = Render Event code in SDLApplication
+                    userevent.data1 = NULL;
+                    userevent.data2 = NULL;
+                    event.type = SDL_USEREVENT;
+                    event.user = userevent;
+                    
+                    SDL_PushEvent(&event);
+                }
 
                 #ifdef HXCPP_TRACY
                 FrameMarkNamed("RenderLoop"); 

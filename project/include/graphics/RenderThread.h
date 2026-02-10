@@ -65,7 +65,9 @@ namespace lime {
 
         bool IsRenderThread();
         bool IsRunning() { return running; }
-
+        
+        static std::atomic<int> activePendingFrames;
+        static std::atomic<bool> hasPendingRenderRequest;
     private:
         void Run();
 
@@ -74,8 +76,8 @@ namespace lime {
         std::thread* workerThread;
         std::atomic<bool> running;
         
-        std::mutex mutex;
         std::condition_variable condition;
+        std::mutex mutex;
         
         std::deque<std::vector<std::function<void()>>> frameQueue;
         std::vector<std::function<void()>> currentFrame;

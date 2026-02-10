@@ -1,6 +1,7 @@
 #include "SDLApplication.h"
 #include "SDLGamepad.h"
 #include "SDLJoystick.h"
+#include <graphics/RenderThread.h>
 #include <system/System.h>
 #include <map>
 #include <stdint.h>
@@ -180,6 +181,11 @@ namespace lime {
 
 					if (event->user.code == 1) { // Render
 
+						if (RenderThread::activePendingFrames > 0) {
+                            RenderThread::hasPendingRenderRequest = true;
+							break;
+						}
+
 						if (splitUpdate) {
 							double realDeltaTime = (double)(nowPerf - lastRenderPerfCounter) * 1000.0 / (double)perfFreq;
 							const double MAX_DELTA_TIME = 10 * renderFramePeriod;
@@ -218,8 +224,12 @@ namespace lime {
 							ApplicationEvent::Dispatch (&applicationEvent);
 
 							if (!splitUpdate) {
-								renderEvent.type = RENDER;
-								RenderEvent::Dispatch (&renderEvent);
+								if (RenderThread::activePendingFrames <= 0) {
+									renderEvent.type = RENDER;
+									RenderEvent::Dispatch (&renderEvent);
+								} else {
+									RenderThread::hasPendingRenderRequest = true;
+								}
 							}
 
 							accumulator -= framePeriod;

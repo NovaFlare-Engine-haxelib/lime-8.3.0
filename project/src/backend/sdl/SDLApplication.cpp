@@ -13,6 +13,9 @@
 
 #ifdef _WIN32
 #include <timeapi.h>
+#endif
+
+#if defined(_MSC_VER) || defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_X64)
 #include <immintrin.h>
 #endif
 

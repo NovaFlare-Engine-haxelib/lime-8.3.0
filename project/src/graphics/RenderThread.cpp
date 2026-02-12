@@ -77,8 +77,6 @@ namespace lime {
     void RenderThread::RebindContext() {
         PushCommand([this]() {
             if (window && context) {
-                //printf("[RenderThread] Rebinding context...\n");
-                // Force unbind then bind to ensure Surface is updated
                 SDL_GL_MakeCurrent(window, NULL);
                 SDL_GL_MakeCurrent(window, context);
             }

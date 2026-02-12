@@ -634,7 +634,7 @@ class NativeWindow
 		return frameRate = value;
 	}
 
-	public function setSplitUpdate(value:Bool):Bool
+	public function setLockRender(value:Bool):Bool
 	{
 		if (handle != null)
 		{

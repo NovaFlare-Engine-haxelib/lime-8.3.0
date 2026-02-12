@@ -380,7 +380,7 @@ namespace lime {
 	void lime_application_set_split_update (value application, bool split) {
 
 		Application* app = (Application*)val_data (application);
-		app->SetSplitUpdate (split);
+		app->SetLockRender (split);
 
 	}
 
@@ -388,7 +388,7 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_application_set_split_update) (HL_CFFIPointer* application, bool split) {
 
 		Application* app = (Application*)application->ptr;
-		app->SetSplitUpdate (split);
+		app->SetLockRender (split);
 
 	}
 

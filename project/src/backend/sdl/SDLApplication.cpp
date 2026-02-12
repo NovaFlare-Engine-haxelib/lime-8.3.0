@@ -71,7 +71,7 @@ namespace lime {
 		currentApplication = this;
 		framePeriod = 1000.0 / 60.0;
 		renderFramePeriod = 1000.0 / 60.0;
-		splitUpdate = false;
+		lockRender = false;
 
 		currentUpdate = 0;
 		lastUpdate = 0;
@@ -183,33 +183,7 @@ namespace lime {
 
 					uint64_t nowPerf = SDL_GetPerformanceCounter ();
 
-					if (event->user.code == 1) { // Render
-
-						if (RenderThread::activePendingFrames > 0) {
-                            RenderThread::hasPendingRenderRequest = true;
-							break;
-						}
-
-						if (splitUpdate) {
-							double realDeltaTime = (double)(nowPerf - lastRenderPerfCounter) * 1000.0 / (double)perfFreq;
-							const double MAX_DELTA_TIME = 10 * renderFramePeriod;
-							if (realDeltaTime < 0) realDeltaTime = 0;
-							if (realDeltaTime > MAX_DELTA_TIME) realDeltaTime = MAX_DELTA_TIME;
-							accumulatorRender += realDeltaTime;
-
-							if (accumulatorRender >= renderFramePeriod) {
-								lastRenderPerfCounter = nowPerf;
-
-								renderEvent.type = RENDER;
-								RenderEvent::Dispatch (&renderEvent);
-
-								accumulatorRender -= renderFramePeriod;
-								if (accumulatorRender > renderFramePeriod * 2) accumulatorRender = 0;
-							}
-						}
-
-					} else { // Update
-
+					if (event->user.code == 0) { // Update
 						double realDeltaTime = (double)(nowPerf - lastPerfCounter) * 1000.0 / (double)perfFreq;
 						const double MAX_DELTA_TIME = 10 * framePeriod;
 						if (realDeltaTime < 0) realDeltaTime = 0;
@@ -227,7 +201,7 @@ namespace lime {
 							applicationEvent.deltaTime = realDeltaTime;
 							ApplicationEvent::Dispatch (&applicationEvent);
 
-							if (!splitUpdate) {
+							if (!lockRender) {
 								if (RenderThread::activePendingFrames <= 0) {
 									renderEvent.type = RENDER;
 									RenderEvent::Dispatch (&renderEvent);
@@ -238,6 +212,30 @@ namespace lime {
 
 							accumulator -= framePeriod;
 							if (accumulator > framePeriod * 2) accumulator = 0;
+						}
+
+					} else if (event->user.code == 1) { // Render
+						if (lockRender) {
+							if (RenderThread::activePendingFrames > 0) {
+								RenderThread::hasPendingRenderRequest = true;
+								break;
+							}
+						
+							double realDeltaTime = (double)(nowPerf - lastRenderPerfCounter) * 1000.0 / (double)perfFreq;
+							const double MAX_DELTA_TIME = 10 * renderFramePeriod;
+							if (realDeltaTime < 0) realDeltaTime = 0;
+							if (realDeltaTime > MAX_DELTA_TIME) realDeltaTime = MAX_DELTA_TIME;
+							accumulatorRender += realDeltaTime;
+
+							if (accumulatorRender >= renderFramePeriod) {
+								lastRenderPerfCounter = nowPerf;
+
+								renderEvent.type = RENDER;
+								RenderEvent::Dispatch (&renderEvent);
+
+								accumulatorRender -= renderFramePeriod;
+								if (accumulatorRender > renderFramePeriod * 2) accumulatorRender = 0;
+							}
 						}
 
 					}
@@ -972,7 +970,6 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 			if (perfFreq) periodPerfTicks = (uint64_t)(framePeriod * (double)perfFreq / 1000.0);
 
 		}
-
 	}
 
 
@@ -995,9 +992,9 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 	}
 
 
-	void SDLApplication::SetSplitUpdate (bool split) {
+	void SDLApplication::SetLockRender (bool split) {
 
-		splitUpdate = split;
+		lockRender = split;
 		if (split) {
 			accumulatorRender = 0;
 		}
@@ -1084,7 +1081,7 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 
 		#else
 			bool updatePending = (nowPerf >= nextPerfCounter);
-			bool renderPending = splitUpdate && (nowPerf >= nextRenderPerfCounter);
+			bool renderPending = (nowPerf >= nextRenderPerfCounter);
 
 			if (updatePending) {
 				SDL_Event ev;
@@ -1116,7 +1113,7 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 				}
 			}
 
-			if (!updatePending && (!renderPending || !splitUpdate)) {
+			if (!updatePending && !renderPending) {
 				uint64_t nextEventCounter = (nextPerfCounter < nextRenderPerfCounter) ? nextPerfCounter : nextRenderPerfCounter;
 				if (nextEventCounter > nowPerf) {
 					uint64_t remainingTicks = nextEventCounter - nowPerf;

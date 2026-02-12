@@ -22,7 +22,7 @@ namespace lime {
 			virtual int Quit () = 0;
 			virtual void SetFrameRate (double frameRate) = 0;
 			virtual void SetRenderFrameRate (double frameRate) {};
-			virtual void SetSplitUpdate (bool split) {};
+			virtual void SetLockRender (bool split) {};
 			virtual bool Update () = 0;
 
 

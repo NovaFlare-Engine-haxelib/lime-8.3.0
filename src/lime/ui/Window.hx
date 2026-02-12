@@ -34,7 +34,7 @@ class Window
 	public var cursor(get, set):MouseCursor;
 	public var display(get, null):Display;
 	public var displayMode(get, set):DisplayMode;
-	public var splitUpdate(get, set):Bool;
+	public var lockRender(get, set):Bool;
 	#if (!lime_doc_gen || (js && html5))
 	public var element(default, null):#if (js && html5) Element #else Dynamic #end;
 	#end
@@ -169,7 +169,7 @@ class Window
 	@:noCompletion private var __minHeight:Int = 0;
 	@:noCompletion private var __maxWidth:Int = 0x7FFFFFFF;
 	@:noCompletion private var __maxHeight:Int = 0x7FFFFFFF;
-	@:noCompletion private var __splitUpdate:Bool = false;
+	@:noCompletion private var __lockRender:Bool = false;
 	@:noCompletion private var __drawFrameRate:Int;
 
 	#if commonjs
@@ -639,15 +639,15 @@ class Window
 		return __maxHeight;
 	}
 
-	@:noCompletion private inline function get_splitUpdate():Bool
+	@:noCompletion private inline function get_lockRender():Bool
 	{
-		return __splitUpdate;
+		return __lockRender;
 	}
 
-	@:noCompletion private function set_splitUpdate(value:Bool):Bool
+	@:noCompletion private function set_lockRender(value:Bool):Bool
 	{
-		__backend.setSplitUpdate(value);
-		return __splitUpdate = value;
+		__backend.setLockRender(value);
+		return __lockRender = value;
 	}
 
 	@:noCompletion private inline function get_drawFrameRate():Int

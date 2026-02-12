@@ -15,12 +15,36 @@ namespace lime {
     std::atomic<int> RenderThread::activePendingFrames(0);
     std::atomic<bool> RenderThread::hasPendingRenderRequest(false);
 
-    RenderThread::RenderThread() : window(nullptr), context(nullptr), workerThread(nullptr), running(false), paused(false), maxPendingFrames(1) {
-        currentFrame.reserve(4096);
+    RenderThread::RenderThread() : window(nullptr), context(nullptr), workerThread(nullptr), running(false), paused(false) {
+        currentFrame = new Frame();
+        currentFrame->reserve(4096);
+        
+        // Pre-allocate pool
+        // Size 16 queue, capacity is 15.
+        for (int i = 0; i < 16; ++i) {
+            Frame* frame = new Frame();
+            frame->reserve(4096);
+            if (!framePool.push(frame)) {
+                delete frame; 
+            }
+        }
     } 
 
     RenderThread::~RenderThread() { 
         Stop(); 
+        
+        if (currentFrame) {
+            delete currentFrame;
+            currentFrame = nullptr;
+        }
+        
+        Frame* frame = nullptr;
+        while (frameQueue.pop(frame)) {
+            delete frame;
+        }
+        while (framePool.pop(frame)) {
+            delete frame;
+        }
     } 
 
     void RenderThread::Start(SDL_Window* window, SDL_GLContext context) { 
@@ -50,8 +74,8 @@ namespace lime {
     } 
 
     void RenderThread::PushCommand(std::function<void()> command) { 
-        std::lock_guard<std::mutex> lock(mutex); 
-        currentFrame.push_back(std::move(command));
+        // No lock needed for SPSC (Main Thread only)
+        currentFrame->push_back(std::move(command));
     } 
 
     void RenderThread::Pause() {
@@ -84,17 +108,41 @@ namespace lime {
     }
 
     void RenderThread::Flip() {
-        std::unique_lock<std::mutex> lock(mutex);
-        
         if (!running) return;
 
-        if (!currentFrame.empty()) {
-            frameQueue.push_back(std::move(currentFrame));
+        if (!currentFrame->empty()) {
+            Frame* nextFrame = nullptr;
+            
+            // Wait for a free frame from pool
+            // If the application logic (SDLApplication.cpp) is working correctly,
+            // activePendingFrames should throttle the main thread before we run out of pool frames.
+            // However, if we do run out, we must wait or allocate new ones.
+            // Since we are in a Lock-Free design, allocating new ones is tricky without a lock on the pool.
+            // But since this is SPSC, we are the only consumer of the pool.
+            
+            while (!framePool.pop(nextFrame)) {
+                if (!running) return;
+                // If pool is empty, it means the render thread is falling behind.
+                // We can yield to let it catch up.
+                std::this_thread::yield();
+            }
+            
+            // Push filled frame to queue
+            // Since we have a pool, the queue should ideally never be full if pool size >= queue size.
+            // But if it is full (shouldn't happen with correct logic), we wait.
+            while (!frameQueue.push(currentFrame)) {
+                if (!running) {
+                    framePool.push(nextFrame);
+                    return;
+                }
+                std::this_thread::yield();
+            }
+            
             activePendingFrames++;
             
-            // Prepare next frame
-            currentFrame = std::vector<std::function<void()>>();
-            currentFrame.reserve(4096);
+            // Swap
+            currentFrame = nextFrame;
+            currentFrame->clear();
             
             // Wake up worker
             condition.notify_all();
@@ -123,7 +171,6 @@ namespace lime {
             #endif
 
             if (paused) {
-                
                 {
                     std::unique_lock<std::mutex> lock(mutex);
                     condition.wait(lock, [this] { return !paused || !running; });
@@ -131,61 +178,66 @@ namespace lime {
 
                 if (!running) break;
 
-                // When resumed, re-bind the context to ensure we target the correct surface
-                // This is crucial for Android where the surface might have been recreated
                 if (window && context) {
                     SDL_GL_MakeCurrent(window, context);
                 }
             }
             
-            std::vector<std::function<void()>> frame;
+            Frame* frame = nullptr;
 
-            { 
-                std::unique_lock<std::mutex> lock(mutex); 
-                condition.wait(lock, [this] { return !frameQueue.empty() || !running || paused; }); 
-                
-                if (paused) continue;
-
-                if (!running && frameQueue.empty()) break; 
-                
-                if (!frameQueue.empty()) {
-                    frame = std::move(frameQueue.front());
-                    frameQueue.pop_front();
-                    
-                    // Notify main thread (Flip) that space is available
-                    condition.notify_all(); 
-                }
-            } 
+            // Optimistic lock-free pop
+            if (frameQueue.pop(frame)) {
+                 // Got work
+            } else {
+                 // Empty, wait using CV
+                 std::unique_lock<std::mutex> lock(mutex);
+                 // Check activePendingFrames as a robust fallback for "not empty"
+                 if (frameQueue.empty() && running && !paused && activePendingFrames == 0) {
+                     condition.wait(lock, [this] { 
+                         return !frameQueue.empty() || !running || paused || activePendingFrames > 0; 
+                     });
+                 }
+                 
+                 if (!running) break;
+                 if (paused) continue;
+                 
+                 if (!frameQueue.pop(frame)) continue;
+            }
             
-            // Execute all commands in the frame
-            if (!frame.empty()) {
-                for (auto& command : frame) {
-                    if (command) {
-                        command();
+            if (frame) {
+                if (!frame->empty()) {
+                    for (auto& command : *frame) {
+                        if (command) {
+                            command();
+                        }
                     }
+                    frame->clear();
+                    
+                    activePendingFrames--;
+
+                    if (hasPendingRenderRequest) {
+                        hasPendingRenderRequest = false;
+                        
+                        SDL_Event event;
+                        SDL_UserEvent userevent;
+                        userevent.type = SDL_USEREVENT;
+                        userevent.code = 1; 
+                        userevent.data1 = NULL;
+                        userevent.data2 = NULL;
+                        event.type = SDL_USEREVENT;
+                        event.user = userevent;
+                        
+                        SDL_PushEvent(&event);
+                    }
+
+                    #ifdef HXCPP_TRACY
+                    FrameMarkNamed("RenderLoop"); 
+                    #endif
                 }
-                frame.clear();
                 
-                activePendingFrames--;
-
-                if (hasPendingRenderRequest) {
-                    hasPendingRenderRequest = false;
-                    
-                    SDL_Event event;
-                    SDL_UserEvent userevent;
-                    userevent.type = SDL_USEREVENT;
-                    userevent.code = 1; // 1 = Render Event code in SDLApplication
-                    userevent.data1 = NULL;
-                    userevent.data2 = NULL;
-                    event.type = SDL_USEREVENT;
-                    event.user = userevent;
-                    
-                    SDL_PushEvent(&event);
+                while (!framePool.push(frame)) {
+                    std::this_thread::yield();
                 }
-
-                #ifdef HXCPP_TRACY
-                FrameMarkNamed("RenderLoop"); 
-                #endif
             }
         } 
 

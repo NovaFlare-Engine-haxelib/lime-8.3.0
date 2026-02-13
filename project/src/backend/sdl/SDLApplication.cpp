@@ -1165,13 +1165,14 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 			event->window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
 			event->window.event == SDL_WINDOWEVENT_MOVED ||
 			event->window.event == SDL_WINDOWEVENT_EXPOSED)) {
-
+			/*
 			SDL_Event userEvent;
 			userEvent.type = SDL_USEREVENT;
 			userEvent.user.code = 0;
 			userEvent.user.data1 = NULL;
 			userEvent.user.data2 = NULL;
 			app->HandleEvent (&userEvent);
+			*/
 
 		}
 

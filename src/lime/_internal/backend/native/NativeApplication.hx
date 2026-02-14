@@ -579,34 +579,8 @@ class NativeApplication
 
 				case WINDOW_DEACTIVATE:
 					window.onDeactivate.dispatch();
-                    #if android
-                    // Capture last frame into bitmap for overlay
-                    if (window.__backend.useHardware && window.context != null) {
-                        var w = window.__width;
-                        var h = window.__height;
-                        if (w > 0 && h > 0) {
-                            var size = w * h * 4;
-                            var pixels = haxe.io.Bytes.alloc(size);
-                            GL.readPixels(0, 0, w, h, GL.RGBA, GL.UNSIGNED_BYTE, pixels);
-                            var argb:Array<Int> = [];
-                            argb.resize(w * h);
-                            var idx = 0;
-                            for (y in 0...h) {
-                                var srcY = h - 1 - y;
-                                var base = srcY * w * 4;
-                                for (x in 0...w) {
-                                    var off = base + x * 4;
-                                    var r = pixels.get(off);
-                                    var g = pixels.get(off + 1);
-                                    var b = pixels.get(off + 2);
-                                    var a = pixels.get(off + 3);
-                                    argb[idx++] = (a << 24) | (r << 16) | (g << 8) | b;
-                                }
-                            }
-                        }
-                    }
-                    #end
 					AudioManager.suspend();
+
 					pauseTimer = System.getTimer();
 
 				case WINDOW_ENTER:

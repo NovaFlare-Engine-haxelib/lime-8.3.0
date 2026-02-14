@@ -3,6 +3,7 @@
 #include "SDLGamepad.h"
 #include "SDLJoystick.h"
 #include <graphics/RenderThread.h>
+#include "../../graphics/opengl/OpenGLBindings.h"
 #include <system/System.h>
 #include <map>
 #include <stdint.h>
@@ -194,15 +195,15 @@ namespace lime {
 							lastPerfCounter = nowPerf;
 							lastUpdate = (double)nowPerf * 1000.0 / (double)perfFreq;
 
-							renderEvent.type = RENDER_UPDATE;
-							RenderEvent::Dispatch (&renderEvent);
-
 							applicationEvent.type = UPDATE;
 							applicationEvent.deltaTime = realDeltaTime;
 							ApplicationEvent::Dispatch (&applicationEvent);
 
+							renderEvent.type = RENDER_UPDATE;
+							RenderEvent::Dispatch (&renderEvent);
+
 							if (!lockRender) {
-								if (RenderThread::activePendingFrames <= 0) {
+								if (!OpenGLBindings::isMultiThreaded || RenderThread::activePendingFrames <= 0) {
 									renderEvent.type = RENDER;
 									RenderEvent::Dispatch (&renderEvent);
 								} else {
@@ -216,7 +217,7 @@ namespace lime {
 
 					} else if (event->user.code == 1) { // Render
 						if (lockRender) {
-							if (RenderThread::activePendingFrames > 0) {
+							if (OpenGLBindings::isMultiThreaded && RenderThread::activePendingFrames > 0) {
 								RenderThread::hasPendingRenderRequest = true;
 								break;
 							}

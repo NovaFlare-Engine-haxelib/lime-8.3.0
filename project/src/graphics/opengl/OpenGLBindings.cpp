@@ -4,6 +4,8 @@
 #include <utils/Bytes.h>
 #include "OpenGL.h"
 #include "OpenGLBindings.h"
+#include <graphics/RenderThread.h>
+#include <thread>
 #include <map>
 #include <string>
 #include <vector>
@@ -66,7 +68,35 @@ namespace lime {
 
 	void OpenGLBindings::SetMultiThreaded (bool enabled) {
 
+		if (isMultiThreaded == enabled) return;
+
 		isMultiThreaded = enabled;
+
+		if (renderThread) {
+
+			if (!enabled) {
+
+				renderThread->Pause();
+
+				while (renderThread->contextHeld) {
+					std::this_thread::yield();
+				}
+
+				renderThread->MakeCurrent();
+
+			} else {
+
+				SDL_Window* window = SDL_GL_GetCurrentWindow();
+
+				if (window) {
+					SDL_GL_MakeCurrent(window, NULL);
+				}
+
+				renderThread->Resume();
+
+			}
+
+		}
 
 	}
 

@@ -440,7 +440,7 @@ namespace lime {
 
 		if (context && !sdlRenderer) {
 
-			if (renderThread.IsRunning()) {
+			if (renderThread.IsRunning() && OpenGLBindings::isMultiThreaded) {
 			renderThread.PushCommand ([this] () {
 				SDL_GL_SwapWindow (sdlWindow);
 			});

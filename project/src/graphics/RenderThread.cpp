@@ -15,12 +15,36 @@ namespace lime {
     std::atomic<int> RenderThread::activePendingFrames(0);
     std::atomic<bool> RenderThread::hasPendingRenderRequest(false);
 
-    RenderThread::RenderThread() : window(nullptr), context(nullptr), workerThread(nullptr), running(false), paused(false), maxPendingFrames(1), contextHeld(false) {
-        currentFrame.reserve(4096);
+    RenderThread::RenderThread() : window(nullptr), context(nullptr), workerThread(nullptr), running(false), paused(false), contextHeld(false) {
+        currentFrame = new Frame();
+        currentFrame->reserve(4096);
+        
+        // Pre-allocate pool
+        // Size 32 queue, capacity is 31.
+        for (int i = 0; i < 31; ++i) {
+            Frame* frame = new Frame();
+            frame->reserve(4096);
+            if (!framePool.push(frame)) {
+                delete frame; 
+            }
+        }
     } 
 
     RenderThread::~RenderThread() { 
         Stop(); 
+        
+        if (currentFrame) {
+            delete currentFrame;
+            currentFrame = nullptr;
+        }
+        
+        Frame* frame = nullptr;
+        while (frameQueue.pop(frame)) {
+            delete frame;
+        }
+        while (framePool.pop(frame)) {
+            delete frame;
+        }
     } 
 
     void RenderThread::Start(SDL_Window* window, SDL_GLContext context) { 
@@ -50,8 +74,8 @@ namespace lime {
     } 
 
     void RenderThread::PushCommand(std::function<void()> command) { 
-        std::lock_guard<std::mutex> lock(mutex); 
-        currentFrame.push_back(std::move(command));
+        // No lock needed for SPSC (Main Thread only)
+        currentFrame->push_back(std::move(command));
     } 
 
     void RenderThread::Pause() {
@@ -84,20 +108,45 @@ namespace lime {
     }
 
     void RenderThread::Flip() {
-        std::unique_lock<std::mutex> lock(mutex);
-        
         if (!running) return;
 
-        if (!currentFrame.empty()) {
-            frameQueue.push_back(std::move(currentFrame));
+        if (!currentFrame->empty()) {
+            Frame* nextFrame = nullptr;
+            
+            // Wait for a free frame from pool
+            if (!framePool.pop(nextFrame)) {
+                std::unique_lock<std::mutex> lock(mutex);
+                condition.wait(lock, [this, &nextFrame] {
+                    return framePool.pop(nextFrame) || !running;
+                });
+                if (!running) return;
+            }
+            
+            // Push filled frame to queue
+            if (!frameQueue.push(currentFrame)) {
+                std::unique_lock<std::mutex> lock(mutex);
+                condition.wait(lock, [this] {
+                    if (!running) return true;
+                    return frameQueue.push(currentFrame);
+                });
+                
+                if (!running) {
+                    framePool.push(nextFrame);
+                    return;
+                }
+            }
+            
             activePendingFrames++;
             
-            // Prepare next frame
-            currentFrame = std::vector<std::function<void()>>();
-            currentFrame.reserve(4096);
+            // Swap
+            currentFrame = nextFrame;
+            currentFrame->clear();
             
             // Wake up worker
-            condition.notify_all();
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                condition.notify_all();
+            }
         }
     }
 
@@ -151,54 +200,70 @@ namespace lime {
                 }
             }
             
-            std::vector<std::function<void()>> frame;
+            Frame* frame = nullptr;
 
-            { 
-                std::unique_lock<std::mutex> lock(mutex); 
-                condition.wait(lock, [this] { return !frameQueue.empty() || !running || paused; }); 
-                
-                if (paused) continue;
-
-                if (!running && frameQueue.empty()) break; 
-                
-                if (!frameQueue.empty()) {
-                    frame = std::move(frameQueue.front());
-                    frameQueue.pop_front();
-                    
-                    // Notify main thread (Flip) that space is available
-                    condition.notify_all(); 
-                }
-            } 
+            // Optimistic lock-free pop
+            bool gotFrame = frameQueue.pop(frame);
             
-            // Execute all commands in the frame
-            if (!frame.empty()) {
-                for (auto& command : frame) {
-                    if (command) {
-                        command();
+            if (!gotFrame) {
+                 // Empty, wait using CV
+                 std::unique_lock<std::mutex> lock(mutex);
+                 // Check activePendingFrames as a robust fallback for "not empty"
+                 if (frameQueue.empty() && running && !paused && !hasPendingRenderRequest) {
+                     condition.wait(lock, [this] { 
+                         return !frameQueue.empty() || !running || paused || hasPendingRenderRequest; 
+                     });
+                 }
+                 
+                 if (!running) break;
+                 if (paused) continue;
+                 
+                 gotFrame = frameQueue.pop(frame);
+            }
+            
+            if (gotFrame && frame) {
+                if (!frame->empty()) {
+                    for (auto& command : *frame) {
+                        if (command) {
+                            command();
+                        }
                     }
+                    frame->clear();
+                    
+                    activePendingFrames--;
+
+                    #ifdef HXCPP_TRACY
+                    FrameMarkNamed("RenderLoop"); 
+                    #endif
                 }
-                frame.clear();
                 
-                activePendingFrames--;
-
-                if (hasPendingRenderRequest) {
-                    hasPendingRenderRequest = false;
-                    
-                    SDL_Event event;
-                    SDL_UserEvent userevent;
-                    userevent.type = SDL_USEREVENT;
-                    userevent.code = 1; // 1 = Render Event code in SDLApplication
-                    userevent.data1 = NULL;
-                    userevent.data2 = NULL;
-                    event.type = SDL_USEREVENT;
-                    event.user = userevent;
-                    
-                    SDL_PushEvent(&event);
+                while (!framePool.push(frame)) {
+                    std::unique_lock<std::mutex> lock(mutex);
+                    condition.wait(lock, [this, frame] {
+                        return framePool.push(frame) || !running;
+                    });
                 }
-
-                #ifdef HXCPP_TRACY
-                FrameMarkNamed("RenderLoop"); 
-                #endif
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    condition.notify_all();
+                }
+            }
+            
+            if (hasPendingRenderRequest) {
+                SDL_Event event;
+                SDL_UserEvent userevent;
+                userevent.type = SDL_USEREVENT;
+                userevent.code = 1; 
+                userevent.data1 = NULL;
+                userevent.data2 = NULL;
+                event.type = SDL_USEREVENT;
+                event.user = userevent;
+                
+                if (SDL_PushEvent(&event) == 1) {
+                    hasPendingRenderRequest = false;
+                } else {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
             }
         } 
 

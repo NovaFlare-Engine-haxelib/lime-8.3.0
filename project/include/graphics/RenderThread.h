@@ -10,8 +10,41 @@
 #include <atomic>
 #include <vector>
 #include <deque>
+#include <array>
 
 namespace lime {
+
+    template<typename T, size_t Size>
+    class LockFreeQueue {
+    public:
+        LockFreeQueue() : head(0), tail(0) {}
+        
+        bool push(const T& value) {
+            size_t t = tail.load(std::memory_order_relaxed);
+            size_t next = (t + 1) % Size;
+            if (next == head.load(std::memory_order_acquire)) return false;
+            buffer[t] = value;
+            tail.store(next, std::memory_order_release);
+            return true;
+        }
+
+        bool pop(T& value) {
+            size_t h = head.load(std::memory_order_relaxed);
+            if (h == tail.load(std::memory_order_acquire)) return false;
+            value = std::move(buffer[h]);
+            head.store((h + 1) % Size, std::memory_order_release);
+            return true;
+        }
+        
+        bool empty() const {
+            return head.load(std::memory_order_relaxed) == tail.load(std::memory_order_acquire);
+        }
+
+    private:
+        std::array<T, Size> buffer;
+        std::atomic<size_t> head;
+        std::atomic<size_t> tail;
+    };
 
     class RenderThread {
     public:
@@ -32,18 +65,13 @@ namespace lime {
             if (IsRenderThread()) {
                 return command();
             }
-            //printf("[RenderThread] RunCommandAndWait<T>: Pushing command...\n"); fflush(stdout);
             std::promise<T> promise;
             std::future<T> future = promise.get_future();
             PushCommand([&]() {
                 promise.set_value(command());
             });
-            //printf("[RenderThread] RunCommandAndWait<T>: Calling Flip...\n"); fflush(stdout);
             Flip();
-            //printf("[RenderThread] RunCommandAndWait<T>: Waiting for future...\n"); fflush(stdout);
-            T result = future.get();
-            //printf("[RenderThread] RunCommandAndWait<T>: Done.\n"); fflush(stdout);
-            return result;
+            return future.get();
         }
 
         bool IsRenderThread();
@@ -65,9 +93,12 @@ namespace lime {
         std::condition_variable condition;
         std::mutex mutex;
         
-        std::deque<std::vector<std::function<void()>>> frameQueue;
-        std::vector<std::function<void()>> currentFrame;
-        int maxPendingFrames;
+        // Use pointers to vectors to avoid copying and enable lightweight swapping
+        using Frame = std::vector<std::function<void()>>;
+        
+        LockFreeQueue<Frame*, 32> frameQueue;
+        LockFreeQueue<Frame*, 32> framePool;
+        Frame* currentFrame;
         
         std::thread::id threadId;
     };

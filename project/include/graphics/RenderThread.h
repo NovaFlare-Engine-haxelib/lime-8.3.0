@@ -77,6 +77,7 @@ namespace lime {
         bool IsRenderThread();
         bool IsRunning() { return running; }
         void MakeCurrent();
+        void SetSwapInterval(int interval);
         
         static std::atomic<int> activePendingFrames;
         static std::atomic<bool> hasPendingRenderRequest;
@@ -89,6 +90,7 @@ namespace lime {
         std::thread* workerThread;
         std::atomic<bool> running;
         std::atomic<bool> paused;
+        std::atomic<int> swapInterval;
         
         std::condition_variable condition;
         std::mutex mutex;

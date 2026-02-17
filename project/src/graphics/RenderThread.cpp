@@ -15,7 +15,7 @@ namespace lime {
     std::atomic<int> RenderThread::activePendingFrames(0);
     std::atomic<bool> RenderThread::hasPendingRenderRequest(false);
 
-    RenderThread::RenderThread() : window(nullptr), context(nullptr), workerThread(nullptr), running(false), paused(false), contextHeld(false) {
+    RenderThread::RenderThread() : window(nullptr), context(nullptr), workerThread(nullptr), running(false), paused(false), contextHeld(false), swapInterval(1) {
         currentFrame = new Frame();
         currentFrame->reserve(4096);
         
@@ -160,6 +160,17 @@ namespace lime {
         }
     }
 
+    void RenderThread::SetSwapInterval(int interval) {
+        swapInterval = interval;
+        if (IsRenderThread()) {
+            SDL_GL_SetSwapInterval(interval);
+        } else {
+            PushCommand([this, interval]() {
+                SDL_GL_SetSwapInterval(interval);
+            });
+        }
+    }
+
     void RenderThread::Run() { 
         #ifdef HXCPP_TRACY
         tracy::SetThreadName("Render Thread");
@@ -197,6 +208,7 @@ namespace lime {
                 if (window && context) {
                     SDL_GL_MakeCurrent(window, context);
                     contextHeld = true;
+                    SDL_GL_SetSwapInterval(swapInterval);
                 }
             }
             

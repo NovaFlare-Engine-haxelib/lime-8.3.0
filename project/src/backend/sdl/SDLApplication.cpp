@@ -203,7 +203,7 @@ namespace lime {
 							RenderEvent::Dispatch (&renderEvent);
 
 							if (!lockRender) {
-								if (!OpenGLBindings::isMultiThreaded || RenderThread::activePendingFrames <= 0) {
+								if (!OpenGLBindings::isMultiThreaded || RenderThread::activePendingFrames < 2) {
 									renderEvent.type = RENDER;
 									RenderEvent::Dispatch (&renderEvent);
 								} else {
@@ -217,7 +217,7 @@ namespace lime {
 
 					} else if (event->user.code == 1) { // Render
 						if (lockRender) {
-							if (OpenGLBindings::isMultiThreaded && RenderThread::activePendingFrames > 0) {
+							if (OpenGLBindings::isMultiThreaded && RenderThread::activePendingFrames >= 2) {
 								RenderThread::hasPendingRenderRequest = true;
 								break;
 							}

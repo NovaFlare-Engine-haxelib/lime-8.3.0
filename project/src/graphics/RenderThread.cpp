@@ -145,7 +145,7 @@ namespace lime {
             // Wake up worker
             {
                 std::lock_guard<std::mutex> lock(mutex);
-                condition.notify_all();
+                condition.notify_one(); // notify_one is enough and more efficient
             }
         }
     }
@@ -257,7 +257,7 @@ namespace lime {
                 }
                 {
                     std::lock_guard<std::mutex> lock(mutex);
-                    condition.notify_all();
+                    condition.notify_one();
                 }
             }
             

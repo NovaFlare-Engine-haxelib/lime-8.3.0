@@ -82,6 +82,11 @@ namespace lime {
         static std::atomic<int> activePendingFrames;
         static std::atomic<bool> hasPendingRenderRequest;
         std::atomic<bool> contextHeld;
+        
+        // Flags for conditional notify to reduce lock contention
+        std::atomic<bool> workerWaiting;
+        std::atomic<bool> mainWaiting;
+
     private:
         void Run();
 
@@ -98,8 +103,8 @@ namespace lime {
         // Use pointers to vectors to avoid copying and enable lightweight swapping
         using Frame = std::vector<std::function<void()>>;
         
-        LockFreeQueue<Frame*, 32> frameQueue;
-        LockFreeQueue<Frame*, 32> framePool;
+        LockFreeQueue<Frame*, 4> frameQueue;
+        LockFreeQueue<Frame*, 4> framePool;
         Frame* currentFrame;
         
         std::thread::id threadId;

@@ -3,6 +3,7 @@
 #include <graphics/PerformanceMonitor.h> 
 #include <SDL.h> 
 #include <sstream> 
+#include <stdio.h> 
 
 #ifdef HXCPP_TRACY
 #include <hx/TelemetryTracy.h>
@@ -15,13 +16,12 @@ namespace lime {
     std::atomic<int> RenderThread::activePendingFrames(0);
     std::atomic<bool> RenderThread::hasPendingRenderRequest(false);
 
-    RenderThread::RenderThread() : window(nullptr), context(nullptr), workerThread(nullptr), running(false), paused(false), contextHeld(false), swapInterval(1) {
+    RenderThread::RenderThread() : window(nullptr), context(nullptr), workerThread(nullptr), running(false), paused(false), contextHeld(false), swapInterval(1), workerWaiting(false), mainWaiting(false) {
         currentFrame = new Frame();
         currentFrame->reserve(4096);
         
         // Pre-allocate pool
-        // Size 32 queue, capacity is 31.
-        for (int i = 0; i < 31; ++i) {
+        for (int i = 0; i < 3; ++i) {
             Frame* frame = new Frame();
             frame->reserve(4096);
             if (!framePool.push(frame)) {
@@ -101,8 +101,12 @@ namespace lime {
     void RenderThread::RebindContext() {
         PushCommand([this]() {
             if (window && context) {
-                SDL_GL_MakeCurrent(window, NULL);
-                SDL_GL_MakeCurrent(window, context);
+                if (SDL_GL_MakeCurrent(window, NULL) < 0) {
+                    printf("RenderThread::RebindContext: Failed to unbind context: %s\n", SDL_GetError());
+                }
+                if (SDL_GL_MakeCurrent(window, context) < 0) {
+                    printf("RenderThread::RebindContext: Failed to bind context: %s\n", SDL_GetError());
+                }
             }
         });
     }
@@ -116,9 +120,11 @@ namespace lime {
             // Wait for a free frame from pool
             if (!framePool.pop(nextFrame)) {
                 std::unique_lock<std::mutex> lock(mutex);
+                mainWaiting = true;
                 condition.wait(lock, [this, &nextFrame] {
                     return framePool.pop(nextFrame) || !running;
                 });
+                mainWaiting = false;
                 if (!running) return;
             }
             
@@ -143,9 +149,9 @@ namespace lime {
             currentFrame->clear();
             
             // Wake up worker
-            {
+            if (workerWaiting) {
                 std::lock_guard<std::mutex> lock(mutex);
-                condition.notify_one(); // notify_one is enough and more efficient
+                condition.notify_one(); 
             }
         }
     }
@@ -156,7 +162,9 @@ namespace lime {
 
     void RenderThread::MakeCurrent() {
         if (window && context) {
-            SDL_GL_MakeCurrent(window, context);
+            if (SDL_GL_MakeCurrent(window, context) < 0) {
+                printf("RenderThread::MakeCurrent: Failed to make context current: %s\n", SDL_GetError());
+            }
         }
     }
 
@@ -180,8 +188,11 @@ namespace lime {
 
         // Make context current on this thread 
         if (window && context) { 
-            SDL_GL_MakeCurrent(window, context); 
-            contextHeld = true;
+            if (SDL_GL_MakeCurrent(window, context) < 0) {
+                printf("RenderThread::Run: Initial context bind failed: %s\n", SDL_GetError());
+            } else {
+                contextHeld = true;
+            }
         } 
 
         while (running) { 
@@ -192,7 +203,9 @@ namespace lime {
             if (paused) {
                 
                 if (window && context) {
-                    SDL_GL_MakeCurrent(window, NULL);
+                    if (SDL_GL_MakeCurrent(window, NULL) < 0) {
+                        printf("RenderThread::Run: Pause context unbind failed: %s\n", SDL_GetError());
+                    }
                     contextHeld = false;
                 }
 
@@ -206,9 +219,12 @@ namespace lime {
                 // When resumed, re-bind the context to ensure we target the correct surface
                 // This is crucial for Android where the surface might have been recreated
                 if (window && context) {
-                    SDL_GL_MakeCurrent(window, context);
-                    contextHeld = true;
-                    SDL_GL_SetSwapInterval(swapInterval);
+                    if (SDL_GL_MakeCurrent(window, context) < 0) {
+                        printf("RenderThread::Run: Resume context bind failed: %s\n", SDL_GetError());
+                    } else {
+                        contextHeld = true;
+                        SDL_GL_SetSwapInterval(swapInterval);
+                    }
                 }
             }
             
@@ -221,11 +237,13 @@ namespace lime {
                  // Empty, wait using CV
                  std::unique_lock<std::mutex> lock(mutex);
                  // Check activePendingFrames as a robust fallback for "not empty"
+                 workerWaiting = true;
                  if (frameQueue.empty() && running && !paused && !hasPendingRenderRequest) {
                      condition.wait(lock, [this] { 
                          return !frameQueue.empty() || !running || paused || hasPendingRenderRequest; 
                      });
                  }
+                 workerWaiting = false;
                  
                  if (!running) break;
                  if (paused) continue;
@@ -251,11 +269,13 @@ namespace lime {
                 
                 while (!framePool.push(frame)) {
                     std::unique_lock<std::mutex> lock(mutex);
+                    workerWaiting = true;
                     condition.wait(lock, [this, frame] {
                         return framePool.push(frame) || !running;
                     });
+                    workerWaiting = false;
                 }
-                {
+                if (mainWaiting) {
                     std::lock_guard<std::mutex> lock(mutex);
                     condition.notify_one();
                 }
@@ -274,14 +294,16 @@ namespace lime {
                 if (SDL_PushEvent(&event) == 1) {
                     hasPendingRenderRequest = false;
                 } else {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    std::this_thread::yield();
                 }
             }
         } 
 
         // Cleanup 
         if (window && context) { 
-            SDL_GL_MakeCurrent(window, NULL); 
+            if (SDL_GL_MakeCurrent(window, NULL) < 0) {
+                 printf("RenderThread::Run: Cleanup context unbind failed: %s\n", SDL_GetError());
+            }
             contextHeld = false;
         } 
     } 

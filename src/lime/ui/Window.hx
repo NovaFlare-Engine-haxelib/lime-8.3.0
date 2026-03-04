@@ -32,6 +32,7 @@ class Window
 	public var borderless(get, set):Bool;
 	public var context(default, null):RenderContext;
 	public var cursor(get, set):MouseCursor;
+	public var disabledKeys:Array<KeyCode>;
 	public var display(get, null):Display;
 	public var displayMode(get, set):DisplayMode;
 	public var lockRender(get, set):Bool;
@@ -208,6 +209,13 @@ class Window
 	{
 		this.application = application;
 		__attributes = attributes != null ? attributes : {};
+
+		disabledKeys = new Array ();
+
+		onKeyDown.add(function(keyCode, modifier) {
+			if (disabledKeys.indexOf (keyCode) > -1)
+				onKeyDown.cancel();
+		}, false, 999999);
 
 		if (Reflect.hasField(__attributes, "parameters")) parameters = __attributes.parameters;
 

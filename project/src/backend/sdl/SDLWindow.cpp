@@ -409,6 +409,8 @@ namespace lime {
 
 	void SDLWindow::Close () {
 
+		renderThread.Stop ();
+
 		if (sdlWindow) {
 
 			SDL_DestroyWindow (sdlWindow);

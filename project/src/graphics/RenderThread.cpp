@@ -4,6 +4,7 @@
 #include <SDL.h> 
 #include <sstream> 
 #include <stdio.h> 
+#include <chrono>
 
 #ifdef HXCPP_TRACY
 #include <hx/TelemetryTracy.h>
@@ -114,6 +115,8 @@ namespace lime {
     void RenderThread::Flip() {
         if (!running) return;
 
+        if (paused) return;
+
         if (!currentFrame->empty()) {
             Frame* nextFrame = nullptr;
             
@@ -121,22 +124,22 @@ namespace lime {
             if (!framePool.pop(nextFrame)) {
                 std::unique_lock<std::mutex> lock(mutex);
                 mainWaiting = true;
-                condition.wait(lock, [this, &nextFrame] {
-                    return framePool.pop(nextFrame) || !running;
+                condition.wait_for(lock, std::chrono::milliseconds(5), [this, &nextFrame] {
+                    return framePool.pop(nextFrame) || !running || paused;
                 });
                 mainWaiting = false;
-                if (!running) return;
+                if (!running || paused) return;
             }
             
             // Push filled frame to queue
             if (!frameQueue.push(currentFrame)) {
                 std::unique_lock<std::mutex> lock(mutex);
-                condition.wait(lock, [this] {
-                    if (!running) return true;
+                condition.wait_for(lock, std::chrono::milliseconds(5), [this] {
+                    if (!running || paused) return true;
                     return frameQueue.push(currentFrame);
                 });
                 
-                if (!running) {
+                if (!running || paused) {
                     framePool.push(nextFrame);
                     return;
                 }
@@ -149,9 +152,9 @@ namespace lime {
             currentFrame->clear();
             
             // Wake up worker
-            if (workerWaiting) {
+            {
                 std::lock_guard<std::mutex> lock(mutex);
-                condition.notify_one(); 
+                condition.notify_all(); 
             }
         }
     }
@@ -275,9 +278,10 @@ namespace lime {
                     });
                     workerWaiting = false;
                 }
-                if (mainWaiting) {
+                
+                {
                     std::lock_guard<std::mutex> lock(mutex);
-                    condition.notify_one();
+                    condition.notify_all();
                 }
             }
             

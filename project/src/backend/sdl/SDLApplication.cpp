@@ -4,6 +4,7 @@
 #include "SDLJoystick.h"
 #include <graphics/RenderThread.h>
 #include "../../graphics/opengl/OpenGLBindings.h"
+#include <graphics/PerformanceMonitor.h>
 #include <system/System.h>
 #include <map>
 #include <stdint.h>
@@ -203,8 +204,9 @@ namespace lime {
 							RenderEvent::Dispatch (&renderEvent);
 
 							if (!lockRender) {
-								if (!OpenGLBindings::isMultiThreaded || RenderThread::activePendingFrames < 2) {
+								if (!OpenGLBindings::isMultiThreaded || !OpenGLBindings::renderThread || !OpenGLBindings::renderThread->IsRunning() || RenderThread::activePendingFrames < 2) {
 									renderEvent.type = RENDER;
+									PerformanceMonitor::Instance().StartFrame();
 									RenderEvent::Dispatch (&renderEvent);
 								} else {
 									RenderThread::hasPendingRenderRequest = true;
@@ -217,7 +219,7 @@ namespace lime {
 
 					} else if (event->user.code == 1) { // Render
 						if (lockRender) {
-							if (OpenGLBindings::isMultiThreaded && RenderThread::activePendingFrames >= 2) {
+							if (OpenGLBindings::isMultiThreaded && OpenGLBindings::renderThread && OpenGLBindings::renderThread->IsRunning() && RenderThread::activePendingFrames >= 2) {
 								RenderThread::hasPendingRenderRequest = true;
 								break;
 							}
@@ -232,6 +234,7 @@ namespace lime {
 								lastRenderPerfCounter = nowPerf;
 
 								renderEvent.type = RENDER;
+								PerformanceMonitor::Instance().StartFrame();
 								RenderEvent::Dispatch (&renderEvent);
 
 								accumulatorRender -= renderFramePeriod;

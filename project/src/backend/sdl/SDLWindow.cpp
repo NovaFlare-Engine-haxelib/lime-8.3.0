@@ -3,6 +3,7 @@
 #include "SDLApplication.h"
 #include "../../graphics/opengl/OpenGL.h"
 #include "../../graphics/opengl/OpenGLBindings.h"
+#include <graphics/PerformanceMonitor.h>
 #include <future>
 
 #ifdef HX_WINDOWS
@@ -445,10 +446,12 @@ namespace lime {
 			if (renderThread.IsRunning() && OpenGLBindings::isMultiThreaded) {
 			renderThread.PushCommand ([this] () {
 				SDL_GL_SwapWindow (sdlWindow);
+				PerformanceMonitor::Instance().EndFrame();
 			});
 			renderThread.Flip();
 		} else {
 				SDL_GL_SwapWindow (sdlWindow);
+				PerformanceMonitor::Instance().EndFrame();
 			}
 
 		} else if (sdlRenderer) {

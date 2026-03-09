@@ -29,6 +29,8 @@
 #include <system/OrientationEvent.h>
 #include <system/SensorEvent.h>
 #include <system/System.h>
+#include <system/BackendThread.h>
+#include <system/ValuePointer.h>
 #include <text/Font.h>
 #include <ui/Cursor.h>
 #include <ui/DropEvent.h>
@@ -4526,6 +4528,55 @@ namespace lime {
 	DEFINE_HL_PRIM (_TBYTES, hl_zlib_decompress, _TBYTES _TBYTES);
 
 
+	void lime_backend_thread_start () {
+		BackendThread::GetInstance()->Start();
+	}
+	HL_PRIM void HL_NAME(hl_backend_thread_start) () {
+		BackendThread::GetInstance()->Start();
+	}
+
+	void lime_backend_thread_stop () {
+		BackendThread::GetInstance()->Stop();
+	}
+	HL_PRIM void HL_NAME(hl_backend_thread_stop) () {
+		BackendThread::GetInstance()->Stop();
+	}
+
+	void lime_backend_thread_run (value callback) {
+		ValuePointer* ptr = new ValuePointer (callback);
+		BackendThread::GetInstance()->Push([ptr](){
+			int base = 0;
+			gc_set_top_of_stack (&base, true);
+			ptr->Call ();
+			gc_set_top_of_stack (0, true);
+			delete ptr;
+		});
+	}
+	HL_PRIM void HL_NAME(hl_backend_thread_run) (vclosure* callback) {
+		ValuePointer* ptr = new ValuePointer (callback);
+		BackendThread::GetInstance()->Push([ptr](){
+			int base = 0;
+			hl_register_thread (&base);
+			ptr->Call ();
+			hl_unregister_thread ();
+			delete ptr;
+		});
+	}
+
+	DEFINE_PRIME0v (lime_backend_thread_start);
+	DEFINE_PRIME0v (lime_backend_thread_stop);
+	DEFINE_PRIME1v (lime_backend_thread_run);
+
+	DEFINE_HL_PRIM (_VOID, hl_backend_thread_start, _NO_ARG);
+	DEFINE_HL_PRIM (_VOID, hl_backend_thread_stop, _NO_ARG);
+	DEFINE_HL_PRIM (_VOID, hl_backend_thread_run, _FUN(_VOID, _NO_ARG));
+
+
+}
+
+
+extern "C" int lime_backend_thread_register_prims () {
+	return 0;
 }
 
 
@@ -4568,6 +4619,7 @@ extern "C" int lime_vorbis_register_prims () { return 0; }
 
 extern "C" int lime_register_prims () {
 
+	lime_backend_thread_register_prims ();
 	lime_cairo_register_prims ();
 	lime_curl_register_prims ();
 	lime_harfbuzz_register_prims ();

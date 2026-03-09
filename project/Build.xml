@@ -320,6 +320,7 @@
 		<file name="src/math/Vector2.cpp" />
 		<file name="src/media/AudioBuffer.cpp" />
 		<file name="src/media/containers/WAV.cpp" />
+		<file name="src/system/BackendThread.cpp" />
 		<file name="src/system/CFFI.cpp" />
 		<file name="src/system/CFFIPointer.cpp" />
 		<file name="src/system/ClipboardEvent.cpp" />

@@ -133,6 +133,10 @@ class Application extends Module
 		__preloader = new Preloader();
 		__preloader.onProgress.add(onPreloadProgress);
 		__preloader.onComplete.add(onPreloadComplete);
+
+		#if (cpp || hl)
+		lime.system.BackendThread.start();
+		#end
 	}
 
 	/**
@@ -603,6 +607,10 @@ class Application extends Module
 		{
 			return;
 		}
+
+		#if (cpp || hl)
+		lime.system.BackendThread.stop();
+		#end
 
 		__unregisterLimeModule(this);
 		__backend.exit();

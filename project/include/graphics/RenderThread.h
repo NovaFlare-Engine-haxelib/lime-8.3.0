@@ -58,7 +58,7 @@ namespace lime {
         void RebindContext();
         
         void PushCommand(std::function<void()> command);
-        void Flip();
+        void Flip(bool forceWait = false);
         
         template<typename T>
         T RunCommandAndWait(std::function<T()> command) {
@@ -68,9 +68,13 @@ namespace lime {
             std::promise<T> promise;
             std::future<T> future = promise.get_future();
             PushCommand([&]() {
-                promise.set_value(command());
+                try {
+                    promise.set_value(command());
+                } catch (...) {
+                    promise.set_exception(std::current_exception());
+                }
             });
-            Flip();
+            Flip(true);
             return future.get();
         }
 
@@ -103,8 +107,8 @@ namespace lime {
         // Use pointers to vectors to avoid copying and enable lightweight swapping
         using Frame = std::vector<std::function<void()>>;
         
-        LockFreeQueue<Frame*, 4> frameQueue;
-        LockFreeQueue<Frame*, 4> framePool;
+        LockFreeQueue<Frame*, 16> frameQueue;
+        LockFreeQueue<Frame*, 16> framePool;
         Frame* currentFrame;
         
         std::thread::id threadId;
@@ -116,18 +120,18 @@ namespace lime {
             command();
             return;
         }
-        //printf("[RenderThread] RunCommandAndWait: Pushing command...\n"); fflush(stdout);
         std::promise<void> promise;
         std::future<void> future = promise.get_future();
         PushCommand([&]() {
-            command();
-            promise.set_value();
+            try {
+                command();
+                promise.set_value();
+            } catch (...) {
+                promise.set_exception(std::current_exception());
+            }
         });
-        //printf("[RenderThread] RunCommandAndWait: Calling Flip...\n"); fflush(stdout);
-        Flip();
-        //printf("[RenderThread] RunCommandAndWait: Waiting for future...\n"); fflush(stdout);
+        Flip(true);
         future.get();
-        //printf("[RenderThread] RunCommandAndWait: Done.\n"); fflush(stdout);
     }
 
 }

@@ -22,7 +22,7 @@ namespace lime {
         currentFrame->reserve(4096);
         
         // Pre-allocate pool
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < 15; ++i) {
             Frame* frame = new Frame();
             frame->reserve(4096);
             if (!framePool.push(frame)) {
@@ -112,7 +112,7 @@ namespace lime {
         });
     }
 
-    void RenderThread::Flip() {
+    void RenderThread::Flip(bool forceWait) {
         if (!running) return;
 
         if (paused) return;
@@ -122,25 +122,36 @@ namespace lime {
             
             // Wait for a free frame from pool
             if (!framePool.pop(nextFrame)) {
-                std::unique_lock<std::mutex> lock(mutex);
-                mainWaiting = true;
-                condition.wait_for(lock, std::chrono::milliseconds(5), [this, &nextFrame] {
-                    return framePool.pop(nextFrame) || !running || paused;
-                });
-                mainWaiting = false;
-                if (!running || paused) return;
+                if (forceWait) {
+                    std::unique_lock<std::mutex> lock(mutex);
+                    mainWaiting = true;
+                    condition.wait(lock, [this, &nextFrame] {
+                        return framePool.pop(nextFrame) || !running || paused;
+                    });
+                    mainWaiting = false;
+                    if (!running || paused) return;
+                } else {
+                    currentFrame->clear();
+                    return;
+                }
             }
             
             // Push filled frame to queue
             if (!frameQueue.push(currentFrame)) {
-                std::unique_lock<std::mutex> lock(mutex);
-                condition.wait_for(lock, std::chrono::milliseconds(5), [this] {
-                    if (!running || paused) return true;
-                    return frameQueue.push(currentFrame);
-                });
-                
-                if (!running || paused) {
+                if (forceWait) {
+                    std::unique_lock<std::mutex> lock(mutex);
+                    condition.wait(lock, [this] {
+                        if (!running || paused) return true;
+                        return frameQueue.push(currentFrame);
+                    });
+                    
+                    if (!running || paused) {
+                        framePool.push(nextFrame);
+                        return;
+                    }
+                } else {
                     framePool.push(nextFrame);
+                    currentFrame->clear();
                     return;
                 }
             }

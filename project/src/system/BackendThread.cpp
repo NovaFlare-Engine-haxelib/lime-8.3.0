@@ -54,11 +54,23 @@ namespace lime {
     }
 
     void BackendThread::Push(std::function<void()> task) {
+        bool shouldRunImmediately = false;
+        
         {
             std::lock_guard<std::mutex> lock(mutex);
-            taskQueue.push_back(task);
+            
+            if (running) {
+                taskQueue.push_back(task);
+            } else {
+                shouldRunImmediately = true;
+            }
         }
-        condition.notify_one();
+        
+        if (shouldRunImmediately) {
+            task();
+        } else {
+            condition.notify_one();
+        }
     }
 
     void BackendThread::Run() {

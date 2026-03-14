@@ -173,7 +173,6 @@ public class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
 
         if (skip) {
            Log.v("SDL", "Skip .. Surface is not ready.");
-           mIsSurfaceReady = false;
            return;
         }
 

@@ -107,8 +107,8 @@ namespace lime {
         // Use pointers to vectors to avoid copying and enable lightweight swapping
         using Frame = std::vector<std::function<void()>>;
         
-        LockFreeQueue<Frame*, 16> frameQueue;
         LockFreeQueue<Frame*, 16> framePool;
+        std::atomic<Frame*> pendingFrame;
         Frame* currentFrame;
         
         std::thread::id threadId;

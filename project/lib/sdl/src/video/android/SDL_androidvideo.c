@@ -53,7 +53,7 @@ int Android_GetDisplayDPI(_THIS, SDL_VideoDisplay *display, float *ddpi, float *
 #include "../SDL_egl_c.h"
 #define Android_GLES_GetProcAddress SDL_EGL_GetProcAddress
 #define Android_GLES_UnloadLibrary SDL_EGL_UnloadLibrary
-#define Android_GLES_SetSwapInterval SDL_EGL_SetSwapInterval
+int Android_GLES_SetSwapInterval(_THIS, int interval); /* Forward declaration */
 #define Android_GLES_GetSwapInterval SDL_EGL_GetSwapInterval
 #define Android_GLES_DeleteContext   SDL_EGL_DeleteContext
 
@@ -200,9 +200,20 @@ int Android_VideoInit(_THIS)
     Android_InitTouch();
 
     Android_InitMouse();
+    
+    videodata->user_swap_interval = -1;
 
     /* We're done! */
     return 0;
+}
+
+int Android_GLES_SetSwapInterval(_THIS, int interval)
+{
+    SDL_VideoData *videodata = (SDL_VideoData *)_this->driverdata;
+    if (videodata) {
+        videodata->user_swap_interval = interval;
+    }
+    return SDL_EGL_SetSwapInterval(_this, interval);
 }
 
 void Android_VideoQuit(_THIS)

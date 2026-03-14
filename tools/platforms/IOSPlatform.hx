@@ -861,7 +861,7 @@ class IOSPlatform extends PlatformTarget
 
 		for (asset in project.assets)
 		{
-			if (asset.type != AssetType.TEMPLATE)
+			if (asset.type != AssetType.TEMPLATE && asset.embed != true)
 			{
 				var targetPath = Path.combine(projectDirectory + "/assets/", asset.resourceName);
 
@@ -873,7 +873,7 @@ class IOSPlatform extends PlatformTarget
 				// System.mkdir (Path.directory (sourceAssetPath));
 				// System.linkFile (flatAssetPath, sourceAssetPath, true, true);
 			}
-			else
+			else if (asset.type == AssetType.TEMPLATE)
 			{
 				var targetPath = Path.combine(projectDirectory, asset.targetPath);
 

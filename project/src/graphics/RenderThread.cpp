@@ -20,6 +20,7 @@ namespace lime {
     RenderThread::RenderThread() : window(nullptr), context(nullptr), workerThread(nullptr), running(false), paused(false), contextHeld(false), swapInterval(1), workerWaiting(false), mainWaiting(false) {
         currentFrame = new Frame();
         currentFrame->reserve(4096);
+        pendingFrame = nullptr;
         
         // Pre-allocate pool
         for (int i = 0; i < 15; ++i) {
@@ -34,15 +35,18 @@ namespace lime {
     RenderThread::~RenderThread() { 
         Stop(); 
         
+        Frame* pending = pendingFrame.exchange(nullptr, std::memory_order_acq_rel);
+        if (pending) {
+            delete pending;
+            pending = nullptr;
+        }
+
         if (currentFrame) {
             delete currentFrame;
             currentFrame = nullptr;
         }
         
         Frame* frame = nullptr;
-        while (frameQueue.pop(frame)) {
-            delete frame;
-        }
         while (framePool.pop(frame)) {
             delete frame;
         }
@@ -135,37 +139,34 @@ namespace lime {
                     return;
                 }
             }
-            
-            // Push filled frame to queue
-            if (!frameQueue.push(currentFrame)) {
-                if (forceWait) {
-                    std::unique_lock<std::mutex> lock(mutex);
-                    condition.wait(lock, [this] {
-                        if (!running || paused) return true;
-                        return frameQueue.push(currentFrame);
-                    });
-                    
-                    if (!running || paused) {
-                        framePool.push(nextFrame);
-                        return;
-                    }
-                } else {
-                    framePool.push(nextFrame);
-                    currentFrame->clear();
-                    return;
-                }
-            }
-            
-            activePendingFrames++;
-            
-            // Swap
+
+            Frame* submitted = currentFrame;
+
             currentFrame = nextFrame;
             currentFrame->clear();
-            
-            // Wake up worker
+
+            Frame* replaced = pendingFrame.exchange(submitted, std::memory_order_acq_rel);
+            if (replaced != nullptr) {
+                if (!replaced->empty()) {
+                    replaced->clear();
+                }
+
+                while (!framePool.push(replaced)) {
+                    std::unique_lock<std::mutex> lock(mutex);
+                    mainWaiting = true;
+                    condition.wait(lock, [this, replaced] {
+                        return framePool.push(replaced) || !running || paused;
+                    });
+                    mainWaiting = false;
+                    if (!running || paused) return;
+                }
+            } else {
+                activePendingFrames++;
+            }
+
             {
                 std::lock_guard<std::mutex> lock(mutex);
-                condition.notify_all(); 
+                condition.notify_all();
             }
         }
     }
@@ -244,28 +245,25 @@ namespace lime {
             
             Frame* frame = nullptr;
 
-            // Optimistic lock-free pop
-            bool gotFrame = frameQueue.pop(frame);
-            
-            if (!gotFrame) {
-                 // Empty, wait using CV
-                 std::unique_lock<std::mutex> lock(mutex);
-                 // Check activePendingFrames as a robust fallback for "not empty"
-                 workerWaiting = true;
-                 if (frameQueue.empty() && running && !paused && !hasPendingRenderRequest) {
-                     condition.wait(lock, [this] { 
-                         return !frameQueue.empty() || !running || paused || hasPendingRenderRequest; 
-                     });
-                 }
-                 workerWaiting = false;
-                 
-                 if (!running) break;
-                 if (paused) continue;
-                 
-                 gotFrame = frameQueue.pop(frame);
+            frame = pendingFrame.exchange(nullptr, std::memory_order_acq_rel);
+
+            if (frame == nullptr) {
+                std::unique_lock<std::mutex> lock(mutex);
+                workerWaiting = true;
+                if (pendingFrame.load(std::memory_order_acquire) == nullptr && running && !paused && !hasPendingRenderRequest) {
+                    condition.wait(lock, [this] { 
+                        return pendingFrame.load(std::memory_order_acquire) != nullptr || !running || paused || hasPendingRenderRequest; 
+                    });
+                }
+                workerWaiting = false;
+                
+                if (!running) break;
+                if (paused) continue;
+                
+                frame = pendingFrame.exchange(nullptr, std::memory_order_acq_rel);
             }
             
-            if (gotFrame && frame) {
+            if (frame) {
                 if (!frame->empty()) {
                     for (auto& command : *frame) {
                         if (command) {

@@ -154,8 +154,14 @@ android_egl_context_restore(SDL_Window *window)
         }
 
         /* 恢复垂直同步配置到暂停前记录的值 */
-        if (saved_swap_interval >= 0) {
-            SDL_GL_SetSwapInterval(saved_swap_interval);
+        {
+            SDL_VideoDevice *device = SDL_GetVideoDevice();
+            SDL_VideoData *videodata = (SDL_VideoData *)device->driverdata;
+            if (videodata && videodata->user_swap_interval >= 0) {
+                SDL_GL_SetSwapInterval(videodata->user_swap_interval);
+            } else if (saved_swap_interval >= 0) {
+                SDL_GL_SetSwapInterval(saved_swap_interval);
+            }
         }
 
         /* 标记备份已完成 */

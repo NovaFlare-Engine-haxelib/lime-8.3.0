@@ -40,6 +40,7 @@ typedef struct SDL_VideoData
     int isPaused;
     int isPausing;
     int pauseAudio;
+    int user_swap_interval;
 } SDL_VideoData;
 
 extern int Android_SurfaceWidth;

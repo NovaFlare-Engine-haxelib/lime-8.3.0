@@ -432,7 +432,7 @@ class AndroidPlatform extends PlatformTarget
 
 		for (asset in project.assets)
 		{
-			if (asset.type != AssetType.TEMPLATE)
+			if (asset.type != AssetType.TEMPLATE && asset.embed != true)
 			{
 				var targetPath = "";
 

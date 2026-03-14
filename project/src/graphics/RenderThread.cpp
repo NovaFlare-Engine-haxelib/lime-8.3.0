@@ -59,6 +59,11 @@ namespace lime {
         workerThread = new std::thread(&RenderThread::Run, this); 
     } 
 
+    void RenderThread::SetContext(SDL_GLContext context) {
+        std::lock_guard<std::mutex> lock(mutex);
+        this->context = context;
+    }
+
     void RenderThread::Stop() { 
         if (!running) return; 
         

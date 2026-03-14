@@ -204,12 +204,10 @@ namespace lime {
 							RenderEvent::Dispatch (&renderEvent);
 
 							if (!lockRender) {
-								if (!OpenGLBindings::isMultiThreaded || !OpenGLBindings::renderThread || !OpenGLBindings::renderThread->IsRunning() || RenderThread::activePendingFrames < 2) {
+								if (!OpenGLBindings::isMultiThreaded || !OpenGLBindings::renderThread || !OpenGLBindings::renderThread->IsRunning() || RenderThread::activePendingFrames < 1) {
 									renderEvent.type = RENDER;
 									PerformanceMonitor::Instance().StartFrame();
 									RenderEvent::Dispatch (&renderEvent);
-								} else {
-									RenderThread::hasPendingRenderRequest = true;
 								}
 							}
 
@@ -218,12 +216,14 @@ namespace lime {
 						}
 
 					} else if (event->user.code == 1) { // Render
+						if (!lockRender) break;
+
+						if (OpenGLBindings::isMultiThreaded && OpenGLBindings::renderThread && OpenGLBindings::renderThread->IsRunning() && RenderThread::activePendingFrames >= 1) {
+							RenderThread::hasPendingRenderRequest.exchange (true);
+							break;
+						}
+
 						if (lockRender) {
-							if (OpenGLBindings::isMultiThreaded && OpenGLBindings::renderThread && OpenGLBindings::renderThread->IsRunning() && RenderThread::activePendingFrames >= 2) {
-								RenderThread::hasPendingRenderRequest = true;
-								break;
-							}
-						
 							double realDeltaTime = (double)(nowPerf - lastRenderPerfCounter) * 1000.0 / (double)perfFreq;
 							const double MAX_DELTA_TIME = 10 * renderFramePeriod;
 							if (realDeltaTime < 0) realDeltaTime = 0;
@@ -241,9 +241,9 @@ namespace lime {
 								if (accumulatorRender > renderFramePeriod * 2) accumulatorRender = 0;
 							}
 						}
-
 					}
 				}
+				
 				
 				break;
 

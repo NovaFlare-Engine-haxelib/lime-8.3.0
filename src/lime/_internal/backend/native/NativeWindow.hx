@@ -184,6 +184,83 @@ class NativeWindow
 		setTextInputEnabled(false);
 	}
 
+	public function restoreContext():Void
+	{
+		#if (!macro && lime_cffi)
+		if (handle == null) return;
+
+		NativeCFFI.lime_window_context_make_current(handle);
+
+		var attributes = parent.__attributes;
+		var contextAttributes = Reflect.hasField(attributes, "context") ? attributes.context : {};
+
+		if (!Reflect.hasField(contextAttributes, "antialiasing")) contextAttributes.antialiasing = 0;
+		if (!Reflect.hasField(contextAttributes, "background")) contextAttributes.background = 0;
+		if (!Reflect.hasField(contextAttributes, "colorDepth")) contextAttributes.colorDepth = 24;
+		if (!Reflect.hasField(contextAttributes, "depth")) contextAttributes.depth = true;
+		if (!Reflect.hasField(contextAttributes, "hardware")) contextAttributes.hardware = true;
+		if (!Reflect.hasField(contextAttributes, "stencil")) contextAttributes.stencil = true;
+		if (contextAttributes.vsync == null) contextAttributes.vsync = false;
+
+		#if (cairo || (!lime_opengl && !lime_opengles))
+		contextAttributes.type = CAIRO;
+		#end
+		if (Reflect.hasField(contextAttributes, "type") && contextAttributes.type == CAIRO) contextAttributes.hardware = false;
+
+		var context = new RenderContext();
+		context.window = parent;
+
+		var contextType:String = CFFI.stringValue(NativeCFFI.lime_window_get_context_type(handle));
+
+		switch (contextType)
+		{
+			case "opengl":
+				var gl = new NativeOpenGLRenderContext();
+
+				useHardware = true;
+				contextAttributes.hardware = true;
+
+				#if lime_opengl
+				context.gl = gl;
+				#end
+
+				context.gles2 = gl;
+				context.webgl = gl;
+				context.type = gl.type;
+				context.version = Std.string(gl.version);
+
+				if (gl.type == OPENGLES && gl.version >= 3)
+				{
+					context.gles3 = gl;
+					context.webgl2 = gl;
+				}
+
+				if (GL.context == null)
+				{
+					GL.context = gl;
+				}
+
+			default:
+				useHardware = false;
+				contextAttributes.hardware = false;
+
+				#if lime_cairo
+				context.cairo = cairo;
+				context.type = CAIRO;
+				context.version = "";
+
+				parent.context = context;
+				render();
+				#end
+				context.type = CAIRO;
+		}
+
+		contextAttributes.type = context.type;
+		context.attributes = contextAttributes;
+		parent.context = context;
+		#end
+	}
+
 	public function alert(message:String, title:String):Void
 	{
 		if (handle != null)

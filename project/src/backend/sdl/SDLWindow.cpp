@@ -18,6 +18,11 @@ namespace lime {
 
     std::vector<SDLWindow*> SDLWindow::windows;
 
+	void SDLWindow::SetGLContext (SDL_GLContext context) {
+		this->context = context;
+		renderThread.SetContext (context);
+	}
+
     void SDLWindow::PauseRendering() {
         //printf("SDLWindow::PauseRendering\n");
         for (auto window : windows) {
@@ -28,10 +33,24 @@ namespace lime {
     void SDLWindow::ResumeRendering() {
         //printf("SDLWindow::ResumeRendering\n");
         for (auto window : windows) {
-            //window->renderThread.Resume();
+            window->renderThread.Resume();
             window->renderThread.RebindContext();
         }
     }
+
+	void SDLWindow::OnRenderDeviceReset() {
+		SDL_Window* currentWindow = SDL_GL_GetCurrentWindow ();
+		SDL_GLContext currentContext = SDL_GL_GetCurrentContext ();
+
+		if (!currentContext) return;
+
+		for (auto window : windows) {
+			if (!currentWindow || window->sdlWindow == currentWindow) {
+				window->SetGLContext (currentContext);
+				window->renderThread.RebindContext ();
+			}
+		}
+	}
 
 
 	static Cursor currentCursor = DEFAULT;

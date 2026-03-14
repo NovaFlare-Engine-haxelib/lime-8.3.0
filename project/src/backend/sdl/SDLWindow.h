@@ -70,9 +70,11 @@ namespace lime {
 			static std::vector<SDLWindow*> windows;
 			static void PauseRendering();
 			static void ResumeRendering();
+			static void OnRenderDeviceReset();
 
 		private:
 
+			void SetGLContext (SDL_GLContext context);
 			SDL_GLContext context;
 			int contextHeight;
 			int contextWidth;

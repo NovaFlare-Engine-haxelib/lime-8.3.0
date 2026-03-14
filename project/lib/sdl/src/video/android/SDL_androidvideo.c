@@ -53,7 +53,7 @@ int Android_GetDisplayDPI(_THIS, SDL_VideoDisplay *display, float *ddpi, float *
 #include "../SDL_egl_c.h"
 #define Android_GLES_GetProcAddress SDL_EGL_GetProcAddress
 #define Android_GLES_UnloadLibrary SDL_EGL_UnloadLibrary
-int Android_GLES_SetSwapInterval(_THIS, int interval); /* Forward declaration */
+int Android_GLES_SetSwapInterval(_THIS, int interval);
 #define Android_GLES_GetSwapInterval SDL_EGL_GetSwapInterval
 #define Android_GLES_DeleteContext   SDL_EGL_DeleteContext
 

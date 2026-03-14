@@ -86,74 +86,6 @@ android_egl_context_restore(SDL_Window *window)
             event.type = SDL_RENDER_DEVICE_RESET;
             SDL_PushEvent(&event);
         }
-        /* 检查最近一次 EGL 调用是否出现 BAD_ALLOC / BAD_MATCH 等错误 */
-        {
-            EGLint egl_err = eglGetError();
-            if (egl_err == EGL_BAD_ALLOC || egl_err == EGL_BAD_MATCH) {
-                event.type = SDL_RENDER_DEVICE_RESET;
-                SDL_PushEvent(&event);
-            }
-        }
-
-        /* 重新同步屏幕参数并调用 nativeSetScreenResolution 对应的 C 层实现。
-           目标：在恢复 EGL 上下文后，确保分辨率、像素格式与最高刷新率被更新。 */
-        int surface_w = window->w;
-        int surface_h = window->h;
-        int device_w = surface_w;
-        int device_h = surface_h;
-
-        if (data && data->native_window) {
-            int nw = ANativeWindow_getWidth(data->native_window);
-            int nh = ANativeWindow_getHeight(data->native_window);
-            if (nw > 0 && nh > 0) {
-                surface_w = nw;
-                surface_h = nh;
-                device_w = nw;
-                device_h = nh;
-            }
-        }
-
-        /* 计算最高刷新率：遍历当前显示的所有模式，选择最大 refresh_rate */
-        int max_rate = 0;
-        SDL_VideoDisplay *display = SDL_GetDisplayForWindow(window);
-        if (display) {
-            /* 包含 desktop_mode 与显示模式列表 */
-            if (display->desktop_mode.refresh_rate > max_rate) {
-                max_rate = display->desktop_mode.refresh_rate;
-            }
-            for (int i = 0; i < display->num_display_modes; ++i) {
-                if (display->display_modes[i].refresh_rate > max_rate) {
-                    max_rate = display->display_modes[i].refresh_rate;
-                }
-            }
-        }
-        if (max_rate <= 0) {
-            max_rate = 60; /* 安全兜底：若未知则回退到 60Hz */
-        }
-
-        /* 更新像素格式：获取当前原生窗口格式并同步到 Android 层数据结构 */
-        if (data && data->native_window) {
-            int fmt = ANativeWindow_getFormat(data->native_window);
-            if (fmt > 0) {
-                Android_SetFormat(fmt, fmt);
-            }
-        }
-
-        /* 缓存上次生效参数，避免刷新率未变化时重复设置 */
-        static int prev_surface_w = 0;
-        static int prev_surface_h = 0;
-        static int prev_rate = 0;
-
-        const SDL_bool need_update = (surface_w != prev_surface_w) || (surface_h != prev_surface_h) || (max_rate != prev_rate);
-        if (need_update) {
-            Android_SetScreenResolution(surface_w, surface_h, device_w, device_h, (float)max_rate);
-            Android_SendResize(window);
-            prev_surface_w = surface_w;
-            prev_surface_h = surface_h;
-            prev_rate = max_rate;
-        }
-
-        /* 恢复垂直同步配置到暂停前记录的值 */
         {
             SDL_VideoDevice *device = SDL_GetVideoDevice();
             SDL_VideoData *videodata = (SDL_VideoData *)device->driverdata;
@@ -163,8 +95,6 @@ android_egl_context_restore(SDL_Window *window)
                 SDL_GL_SetSwapInterval(saved_swap_interval);
             }
         }
-
-        /* 标记备份已完成 */
         data->backup_done = 0;
     }
 }

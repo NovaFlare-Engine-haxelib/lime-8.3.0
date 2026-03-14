@@ -56,6 +56,7 @@ namespace lime {
         void Pause();
         void Resume();
         void RebindContext();
+        void SetContext(SDL_GLContext context);
         
         void PushCommand(std::function<void()> command);
         void Flip(bool forceWait = false);

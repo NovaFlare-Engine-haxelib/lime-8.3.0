@@ -70,19 +70,18 @@ namespace lime {
 
 		if (isMultiThreaded == enabled) return;
 
-		isMultiThreaded = enabled;
-
 		if (renderThread) {
 
 			if (!enabled) {
 
 				renderThread->Pause();
-
-				while (renderThread->contextHeld) {
-					std::this_thread::yield();
+				
+				if (renderThread->WaitForContext(false, 2000) && !renderThread->contextHeld.load(std::memory_order_acquire)) {
+					renderThread->MakeCurrent();
+					isMultiThreaded = false;
+				} else {
+					renderThread->Resume();
 				}
-
-				renderThread->MakeCurrent();
 
 			} else {
 
@@ -92,9 +91,14 @@ namespace lime {
 					SDL_GL_MakeCurrent(window, NULL);
 				}
 
+				isMultiThreaded = true;
 				renderThread->Resume();
 
 			}
+
+		} else {
+			
+			isMultiThreaded = enabled;
 
 		}
 

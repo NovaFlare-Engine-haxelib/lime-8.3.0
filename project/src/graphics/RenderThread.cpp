@@ -199,6 +199,14 @@ namespace lime {
         }
     }
 
+    bool RenderThread::WaitForContext(bool held, int timeoutMS) {
+        if (!running) return contextHeld.load(std::memory_order_acquire) == held;
+        std::unique_lock<std::mutex> lock(mutex);
+        return condition.wait_for(lock, std::chrono::milliseconds(timeoutMS), [this, held] {
+            return !running || contextHeld.load(std::memory_order_acquire) == held;
+        });
+    }
+
     void RenderThread::Run() { 
         #ifdef HXCPP_TRACY
         tracy::SetThreadName("Render Thread");
@@ -212,6 +220,8 @@ namespace lime {
                 printf("RenderThread::Run: Initial context bind failed: %s\n", SDL_GetError());
             } else {
                 contextHeld = true;
+                    std::lock_guard<std::mutex> lock(mutex);
+                    condition.notify_all();
             }
         } 
 
@@ -227,6 +237,8 @@ namespace lime {
                         printf("RenderThread::Run: Pause context unbind failed: %s\n", SDL_GetError());
                     }
                     contextHeld = false;
+                    std::lock_guard<std::mutex> lock(mutex);
+                    condition.notify_all();
                 }
 
                 {
@@ -244,6 +256,8 @@ namespace lime {
                     } else {
                         contextHeld = true;
                         SDL_GL_SetSwapInterval(swapInterval);
+                        std::lock_guard<std::mutex> lock(mutex);
+                        condition.notify_all();
                     }
                 }
             }
@@ -323,6 +337,8 @@ namespace lime {
                  printf("RenderThread::Run: Cleanup context unbind failed: %s\n", SDL_GetError());
             }
             contextHeld = false;
+            std::lock_guard<std::mutex> lock(mutex);
+            condition.notify_all();
         } 
     } 
 

@@ -83,6 +83,7 @@ namespace lime {
         bool IsRunning() { return running; }
         void MakeCurrent();
         void SetSwapInterval(int interval);
+        bool WaitForContext(bool held, int timeoutMS);
         
         static std::atomic<int> activePendingFrames;
         static std::atomic<bool> hasPendingRenderRequest;

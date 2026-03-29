@@ -1,0 +1,22 @@
+<xml>
+
+	<files id="native-toolkit-spng-depends">
+		<depend name="${NATIVE_TOOLKIT_PATH}/spng/spng/spng.h" />
+	</files>
+
+	<files id="native-toolkit-spng" tags="">
+
+		<cache value="1" />
+		<tag value="${NATIVE_TOOLKIT_OPTIM_TAG}" if="NATIVE_TOOLKIT_OPTIM_TAG" />
+
+		<compilerflag value="-I${NATIVE_TOOLKIT_PATH}/spng/spng/" />
+		<compilerflag value="-I${NATIVE_TOOLKIT_PATH}/zlib/" />
+		<compilerflag value="-DSPNG_STATIC" />
+
+		<depend files="native-toolkit-spng-depends" />
+
+		<file name="${NATIVE_TOOLKIT_PATH}/spng/spng/spng.c" />
+
+	</files>
+
+</xml>

@@ -44,7 +44,7 @@ class ImageHelper
 				}
 				catch (e:Dynamic) {}
 
-				if (image.buffer != null)
+				if (image != null && image.buffer != null)
 				{
 					return image;
 				}
@@ -123,7 +123,7 @@ class ImageHelper
 			}
 			catch (e:Dynamic) {}
 
-			if (image.buffer != null)
+			if (image != null && image.buffer != null)
 			{
 				return image;
 			}

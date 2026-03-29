@@ -298,6 +298,9 @@ namespace lime {
 
 				int components = cinfo.output_components;
 				imageBuffer->Resize (cinfo.output_width, cinfo.output_height, 32);
+				imageBuffer->format = BGRA32;
+				imageBuffer->premultiplied = true;
+				imageBuffer->transparent = false;
 
 				unsigned char *bytes = imageBuffer->data->buffer->b;
 				unsigned char *scanline = new unsigned char [imageBuffer->width * components];
@@ -347,9 +350,9 @@ namespace lime {
 
 							}
 
-							*bytes++ = (unsigned char)((0xFF - c) * (0xFF - k) / 0xFF);
-							*bytes++ = (unsigned char)((0xFF - m) * (0xFF - k) / 0xFF);
 							*bytes++ = (unsigned char)((0xFF - y) * (0xFF - k) / 0xFF);
+							*bytes++ = (unsigned char)((0xFF - m) * (0xFF - k) / 0xFF);
+							*bytes++ = (unsigned char)((0xFF - c) * (0xFF - k) / 0xFF);
 							*bytes++ = 0xFF;
 
 						}
@@ -368,9 +371,12 @@ namespace lime {
 
 						while (line < end) {
 
-							*bytes++ = *line++;
-							*bytes++ = *line++;
-							*bytes++ = *line++;
+							unsigned char r = *line++;
+							unsigned char g = *line++;
+							unsigned char b = *line++;
+							*bytes++ = b;
+							*bytes++ = g;
+							*bytes++ = r;
 							*bytes++ = 0xFF;
 
 						}
@@ -464,13 +470,38 @@ namespace lime {
 
 			for(int x = 0; x < w; x++) {
 
-				dest[0] = src[0];
-				dest[1] = src[1];
-				dest[2] = src[2];
+				unsigned int r = 0, g = 0, b = 0, a = 0;
+
+				switch (imageBuffer->format) {
+					case BGRA32:
+						b = src[0]; g = src[1]; r = src[2]; a = src[3];
+						break;
+					case ARGB32:
+						a = src[0]; r = src[1]; g = src[2]; b = src[3];
+						break;
+					case RGBA32:
+					default:
+						r = src[0]; g = src[1]; b = src[2]; a = src[3];
+						break;
+				}
+
+				if (imageBuffer->premultiplied && a != 0 && a != 255) {
+					r = (r * 255 + (a / 2)) / a;
+					g = (g * 255 + (a / 2)) / a;
+					b = (b * 255 + (a / 2)) / a;
+					if (r > 255) r = 255;
+					if (g > 255) g = 255;
+					if (b > 255) b = 255;
+				}
+
+				dest[0] = (unsigned char)r;
+				dest[1] = (unsigned char)g;
+				dest[2] = (unsigned char)b;
 				dest += 3;
 				src += 4;
 
 			}
+
 
 			jpeg_write_scanlines (&cinfo, &row_pointer, 1);
 

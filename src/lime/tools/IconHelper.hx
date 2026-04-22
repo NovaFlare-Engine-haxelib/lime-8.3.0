@@ -45,7 +45,7 @@ class IconHelper
 		#if (lime && lime_cffi && !macro)
 		var icon = findMatch(icons, width, height);
 
-		if (icon != null && icon.size > 0 && Path.extension(icon.path).toLowerCase() == "png")
+		if (icon != null && icon.size > 0 && Path.extension(icon.path) == "png")
 		{
 			if (canUseCache(targetPath, [icon]))
 			{
@@ -350,7 +350,7 @@ class IconHelper
 			return null;
 		}
 
-		var extension = Path.extension(icon.path).toLowerCase();
+		var extension = Path.extension(icon.path);
 
 		#if (lime && lime_cffi && !macro)
 		var image:Image = null;

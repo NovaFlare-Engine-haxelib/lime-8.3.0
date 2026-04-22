@@ -173,9 +173,7 @@ class NativeWindow
 		context.attributes = contextAttributes;
 		parent.context = context;
 
-		setLockRender(Reflect.hasField(attributes, "lockRender") ? Reflect.field(attributes, "lockRender") : true);
-		setDrawFrameRate(Reflect.hasField(attributes, "drawFrameRate") ? Reflect.field(attributes, "drawFrameRate") : 60);
-		setFrameRate(Reflect.hasField(attributes, "frameRate") ? attributes.frameRate : 20);
+		setFrameRate(Reflect.hasField(attributes, "frameRate") ? attributes.frameRate : 60);
 		#end
 
 		// SDL 2 enables text input events by default, but we want them only

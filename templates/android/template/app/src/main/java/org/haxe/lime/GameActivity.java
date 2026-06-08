@@ -23,6 +23,8 @@ import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.webkit.MimeTypeMap;
 import android.Manifest;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
 import org.haxe.extension.Extension;
 import org.libsdl.app.SDLActivity;
 
@@ -140,19 +142,30 @@ public class GameActivity extends SDLActivity {
 	}
 
 
-	@Override public void onBackPressed () {
+	private boolean handleBackPressed () {
 
 		for (Extension extension : extensions) {
 
 			if (!extension.onBackPressed ()) {
 
-				return;
+				return false;
 
 			}
 
 		}
 
-		super.onBackPressed ();
+		return true;
+
+	}
+
+
+	@Override public void onBackPressed () {
+
+		if (handleBackPressed ()) {
+
+			super.onBackPressed ();
+
+		}
 
 	}
 
@@ -252,6 +265,22 @@ public class GameActivity extends SDLActivity {
 
 			extension.onCreate (state);
 
+		}
+
+		// Android 13+: Register predictive back gesture callback
+		// Fixes Android 16 back button exiting app instead of dispatching to extensions
+		if (Build.VERSION.SDK_INT >= 33) {
+			getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+				OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+				new OnBackInvokedCallback() {
+					@Override
+					public void onBackInvoked() {
+						if (handleBackPressed()) {
+							finish();
+						}
+					}
+				}
+			);
 		}
 
 	}

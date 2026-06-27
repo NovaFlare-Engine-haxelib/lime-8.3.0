@@ -206,6 +206,32 @@ namespace lime {
 
 			png_read_end (png_ptr, NULL);
 
+			imageBuffer->format = BGRA32;
+			imageBuffer->premultiplied = true;
+
+			bool transparent = false;
+			int imageSize = imageBuffer->Stride () * imageBuffer->height;
+
+			for (int i = 0; i + 3 < imageSize; i += 4) {
+				unsigned int r = bytes[i];
+				unsigned int g = bytes[i + 1];
+				unsigned int b = bytes[i + 2];
+				unsigned int a = bytes[i + 3];
+
+				if (a != 255) {
+					transparent = true;
+					r = (r * a + 127) / 255;
+					g = (g * a + 127) / 255;
+					b = (b * a + 127) / 255;
+				}
+
+				bytes[i] = (unsigned char)b;
+				bytes[i + 1] = (unsigned char)g;
+				bytes[i + 2] = (unsigned char)r;
+			}
+
+			imageBuffer->transparent = transparent;
+
 		} else {
 
 			imageBuffer->width = width;

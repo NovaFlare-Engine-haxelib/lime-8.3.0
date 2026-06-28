@@ -22,6 +22,8 @@ import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.webkit.MimeTypeMap;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
 import android.Manifest;
 import org.haxe.extension.Extension;
 import org.libsdl.app.SDLActivity;
@@ -152,7 +154,7 @@ public class GameActivity extends SDLActivity {
 
 		}
 
-		super.onBackPressed ();
+		// super.onBackPressed ();
 
 	}
 
@@ -251,6 +253,38 @@ public class GameActivity extends SDLActivity {
 		for (Extension extension : extensions) {
 
 			extension.onCreate (state);
+
+		}
+
+		if (Build.VERSION.SDK_INT >= 33) {
+
+			getOnBackInvokedDispatcher ().registerOnBackInvokedCallback (
+				OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+				new OnBackInvokedCallback () {
+
+					@Override public void onBackInvoked () {
+
+						for (Extension extension : extensions) {
+
+							if (!extension.onBackPressed ()) {
+
+								return;
+
+							}
+
+						}
+
+						// 手动向 SDL 派发返回键事件，确保 Haxe 侧有“输出”
+						onNativeKeyDown (KeyEvent.KEYCODE_BACK);
+						onNativeKeyUp (KeyEvent.KEYCODE_BACK);
+
+						// 屏蔽掉返回桌面
+						// moveTaskToBack (true);
+
+					}
+
+				}
+			);
 
 		}
 

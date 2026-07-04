@@ -71,7 +71,7 @@ namespace lime {
 		SDL_LogSetPriority (SDL_LOG_CATEGORY_APPLICATION, SDL_LOG_PRIORITY_WARN);
 
 		currentApplication = this;
-		framePeriod = 1000.0 / 60.0;
+		framePeriod = 50.0;
 		renderFramePeriod = 1000.0 / 60.0;
 		lockRender = false;
 
@@ -197,7 +197,7 @@ namespace lime {
 							lastUpdate = (double)nowPerf * 1000.0 / (double)perfFreq;
 
 							applicationEvent.type = UPDATE;
-							applicationEvent.deltaTime = realDeltaTime;
+							applicationEvent.deltaTime = framePeriod;
 							ApplicationEvent::Dispatch (&applicationEvent);
 
 							renderEvent.type = RENDER_UPDATE;
@@ -347,6 +347,9 @@ namespace lime {
 			case SDL_MOUSEMOTION:
 			case SDL_MOUSEBUTTONDOWN:
 			case SDL_MOUSEBUTTONUP:
+				ProcessMouseEvent (event);
+				break;
+
 			case SDL_MOUSEWHEEL:
 
 				ProcessMouseEvent (event);
@@ -1078,9 +1081,6 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 			if (nowMs >= nextUpdate) {
 
 				event.type = SDL_USEREVENT;
-				event.user.code = 0;
-				event.user.data1 = NULL;
-				event.user.data2 = NULL;
 				HandleEvent (&event);
 				event.type = -1;
 

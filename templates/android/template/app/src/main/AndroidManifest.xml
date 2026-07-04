@@ -7,7 +7,6 @@
     <uses-feature android:glEsVersion="0x00020000" android:required="true" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
-    <!-- Android 16 返回键权限 - 必需 -->
     <uses-permission android:name="android.permission.BACK" />
     <uses-permission android:name="android.permission.SYSTEM_OVERLAY_WINDOW" />
     

@@ -45,7 +45,9 @@
 	<set name="NATIVE_TOOLKIT_HAVE_FREETYPE" value="1" if="LIME_FREETYPE" />
 	<set name="NATIVE_TOOLKIT_HAVE_HARFBUZZ" value="1" if="LIME_HARFBUZZ" />
 	<set name="NATIVE_TOOLKIT_HAVE_MBEDTLS" value="1" if="LIME_MBEDTLS" />
-	<set name="NATIVE_TOOLKIT_HAVE_PNG" value="1" if="LIME_PNG" />
+	<section if="ios || tvos">
+		<set name="NATIVE_TOOLKIT_HAVE_PNG" value="1" if="LIME_PNG" />
+	</section>
 	<set name="NATIVE_TOOLKIT_HAVE_SDL" value="1" if="LIME_SDL" />
 
 	<set name="NATIVE_TOOLKIT_SDL_STATIC" value="1" />
@@ -212,10 +214,12 @@
 
 		<section if="LIME_PNG">
 
-			<compilerflag value="-I${NATIVE_TOOLKIT_PATH}/custom/png/" />
-			<compilerflag value="-I${NATIVE_TOOLKIT_PATH}/png/" />
+			<compilerflag value="-I${NATIVE_TOOLKIT_PATH}/custom/png/" if="ios || tvos" />
+			<compilerflag value="-I${NATIVE_TOOLKIT_PATH}/png/" if="ios || tvos" />
+			<compilerflag value="-I${NATIVE_TOOLKIT_PATH}/spng/spng/" unless="ios || tvos" />
 			<compilerflag value="-I${NATIVE_TOOLKIT_PATH}/zlib/" />
 			<compilerflag value="-DLIME_PNG" />
+			<compilerflag value="-DSPNG_STATIC" unless="ios || tvos" />
 
 			<file name="src/graphics/format/PNG.cpp" />
 
@@ -375,6 +379,7 @@
 	<include name="lib/openal-files.xml" />
 	<include name="lib/pixman-files.xml" />
 	<include name="lib/png-files.xml" />
+	<include name="lib/spng-files.xml" />
 	<include name="lib/sdl-files.xml" />
 	<include name="lib/tinyfiledialogs-files.xml" />
 	<include name="lib/vorbis-files.xml" />
@@ -407,7 +412,12 @@
 		<files id="native-toolkit-ogg" if="LIME_OGG" />
 		<files id="native-toolkit-openal" if="LIME_OPENALSOFT" />
 		<files id="native-toolkit-pixman" if="LIME_PIXMAN" />
-		<files id="native-toolkit-png" if="LIME_PNG" />
+		<section if="ios || tvos">
+			<files id="native-toolkit-png" if="LIME_PNG" />
+		</section>
+		<section unless="ios || tvos">
+			<files id="native-toolkit-spng" if="LIME_PNG" />
+		</section>
 		<files id="native-toolkit-sdl" if="LIME_SDL" unless="emscripten" />
 		<files id="native-toolkit-tinyfiledialogs" if="LIME_TINYFILEDIALOGS" />
 		<files id="native-toolkit-vorbis" if="LIME_VORBIS" />

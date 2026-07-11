@@ -1081,6 +1081,9 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 			if (nowMs >= nextUpdate) {
 
 				event.type = SDL_USEREVENT;
+				event.user.code = 0;
+				event.user.data1 = NULL;
+				event.user.data2 = NULL;
 				HandleEvent (&event);
 				event.type = -1;
 

@@ -117,9 +117,6 @@ namespace lime {
                 if (SDL_GL_MakeCurrent(window, context) < 0) {
                     printf("RenderThread::RebindContext: Failed to bind context: %s\n", SDL_GetError());
                 }
-				#if defined(IPHONE) || defined(APPLETV)
-				SDL_GL_SetSwapInterval(swapInterval);
-				#endif
             }
         });
     }

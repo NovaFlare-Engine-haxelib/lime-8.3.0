@@ -71,11 +71,7 @@ namespace lime {
 		SDL_LogSetPriority (SDL_LOG_CATEGORY_APPLICATION, SDL_LOG_PRIORITY_WARN);
 
 		currentApplication = this;
-		#if defined(IPHONE) || defined(APPLETV)
-		framePeriod = 1000.0 / 60.0;
-		#else
 		framePeriod = 50.0;
-		#endif
 		renderFramePeriod = 1000.0 / 60.0;
 		lockRender = false;
 
@@ -201,11 +197,7 @@ namespace lime {
 							lastUpdate = (double)nowPerf * 1000.0 / (double)perfFreq;
 
 							applicationEvent.type = UPDATE;
-							#if defined(IPHONE) || defined(APPLETV)
-							applicationEvent.deltaTime = realDeltaTime;
-							#else
 							applicationEvent.deltaTime = framePeriod;
-							#endif
 							ApplicationEvent::Dispatch (&applicationEvent);
 
 							renderEvent.type = RENDER_UPDATE;

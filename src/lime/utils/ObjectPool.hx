@@ -29,7 +29,12 @@ import haxe.ds.ObjectMap;
 
 	@:noCompletion private var __inactiveObject0:T;
 	@:noCompletion private var __inactiveObject1:T;
-	@:noCompletion private var __inactiveObjectList:List<T>;
+	// A List allocates one managed ListNode for every release/get cycle.  The
+	// renderer exercises these pools tens of thousands of times per nursery
+	// cohort, turning an otherwise reusable object pool into the largest source
+	// of frame garbage.  Array keeps the inactive stack in one reusable backing
+	// store and makes push/pop allocation-free after warm-up.
+	@:noCompletion private var __inactiveObjectList:Array<T>;
 	@:noCompletion private var __pool:Map<T, Bool>;
 	@:noCompletion private var __size:Null<Int>;
 
@@ -49,7 +54,7 @@ import haxe.ds.ObjectMap;
 
 		__inactiveObject0 = null;
 		__inactiveObject1 = null;
-		__inactiveObjectList = new List<T>();
+		__inactiveObjectList = [];
 
 		if (create != null)
 		{
@@ -100,7 +105,7 @@ import haxe.ds.ObjectMap;
 
 		__inactiveObject0 = null;
 		__inactiveObject1 = null;
-		__inactiveObjectList.clear();
+		__inactiveObjectList.resize(0);
 	}
 
 	/**
@@ -219,7 +224,7 @@ import haxe.ds.ObjectMap;
 		}
 		else
 		{
-			__inactiveObjectList.add(object);
+			__inactiveObjectList.push(object);
 		}
 
 		inactiveObjects++;
@@ -288,14 +293,12 @@ import haxe.ds.ObjectMap;
 
 		if (count == 0 || inactiveObjects == 0) return;
 
-		for (object in __inactiveObjectList)
+		while (count > 0 && inactiveObjects > 0 && __inactiveObjectList.length > 0)
 		{
+			var object = __inactiveObjectList.pop();
 			__pool.remove(object);
-			__inactiveObjectList.remove(object);
 			inactiveObjects--;
 			count--;
-
-			if (count == 0 || inactiveObjects == 0) return;
 		}
 	}
 
@@ -331,7 +334,7 @@ import haxe.ds.ObjectMap;
 					if (object != null)
 					{
 						__pool.set(object, false);
-						__inactiveObjectList.add(object);
+						__inactiveObjectList.push(object);
 						inactiveObjects++;
 					}
 					else

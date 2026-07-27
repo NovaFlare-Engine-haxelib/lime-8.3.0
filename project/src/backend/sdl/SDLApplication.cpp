@@ -8,13 +8,20 @@
 #include <system/System.h>
 #include <map>
 #include <stdint.h>
+#include <chrono>
+#include <cstdlib>
+#include <thread>
 
 #ifdef HX_MACOS
 #include <CoreFoundation/CoreFoundation.h>
 #endif
 
 #ifdef _WIN32
+#include <windows.h>
 #include <timeapi.h>
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
 #endif
 
 #if defined(_MSC_VER) || defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_X64)
@@ -53,6 +60,66 @@ namespace lime {
 	static uint64_t nextRenderPerfCounter = 0;
 	static uint64_t periodRenderPerfTicks = 0;
 	static bool hrInit = false;
+
+	static double FrameRateOverride (const char* name, double fallback) {
+		const char* value = std::getenv (name);
+		if (value == NULL || *value == '\0') return fallback;
+		char* end = NULL;
+		const double parsed = std::strtod (value, &end);
+		return end != value && *end == '\0' && parsed > 0.0
+			? parsed : fallback;
+	}
+
+	// Sleep against an absolute high-resolution deadline and reserve only the
+	// final 100 microseconds for a short spin. The previous high-FPS path used
+	// _mm_pause for the whole 0.5-1.0 ms interval, permanently consuming a CPU
+	// core and starving the render/GC workers that were supposed to help it.
+	static void WaitForFrameDeadline (uint64_t deadline, uint64_t frequency) {
+		if (frequency == 0) return;
+		uint64_t now = SDL_GetPerformanceCounter ();
+		if (now >= deadline) return;
+
+		const uint64_t spinReserve = frequency / 10000; // 100 us
+		const uint64_t remaining = deadline - now;
+		if (remaining > spinReserve) {
+			const uint64_t waitTicks = remaining - spinReserve;
+			#ifdef _WIN32
+			struct HighResolutionTimer {
+				HANDLE handle;
+				HighResolutionTimer () : handle (CreateWaitableTimerExW (
+					NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+					TIMER_MODIFY_STATE | SYNCHRONIZE)) {
+					if (handle == NULL)
+						handle = CreateWaitableTimerW (NULL, FALSE, NULL);
+				}
+				~HighResolutionTimer () {
+					if (handle != NULL) CloseHandle (handle);
+				}
+			};
+			static thread_local HighResolutionTimer timer;
+			if (timer.handle != NULL) {
+				const uint64_t wait100ns = waitTicks * 10000000ULL / frequency;
+				if (wait100ns > 0) {
+					LARGE_INTEGER dueTime;
+					dueTime.QuadPart = -static_cast<LONGLONG> (wait100ns);
+					if (SetWaitableTimer (timer.handle, &dueTime, 0, NULL,
+						NULL, FALSE))
+						WaitForSingleObject (timer.handle, INFINITE);
+				}
+			} else {
+				std::this_thread::yield ();
+			}
+			#else
+			const uint64_t waitMicros = waitTicks * 1000000ULL / frequency;
+			if (waitMicros > 0)
+				std::this_thread::sleep_for (
+					std::chrono::microseconds (waitMicros));
+			#endif
+		}
+
+		while ((now = SDL_GetPerformanceCounter ()) < deadline)
+			LIME_PAUSE ();
+	}
 
 
 	SDLApplication::SDLApplication () {
@@ -204,7 +271,7 @@ namespace lime {
 							RenderEvent::Dispatch (&renderEvent);
 
 							if (!lockRender) {
-								if (!OpenGLBindings::isMultiThreaded || !OpenGLBindings::renderThread || !OpenGLBindings::renderThread->IsRunning() || RenderThread::activePendingFrames < 1) {
+								if (!OpenGLBindings::isMultiThreaded || !OpenGLBindings::renderThread || !OpenGLBindings::renderThread->IsRunning() || RenderThread::activePendingFrames < RenderThread::MaxPendingFrames) {
 									renderEvent.type = RENDER;
 									PerformanceMonitor::Instance().StartFrame();
 									RenderEvent::Dispatch (&renderEvent);
@@ -218,7 +285,7 @@ namespace lime {
 					} else if (event->user.code == 1) { // Render
 						if (!lockRender) break;
 
-						if (OpenGLBindings::isMultiThreaded && OpenGLBindings::renderThread && OpenGLBindings::renderThread->IsRunning() && RenderThread::activePendingFrames >= 1) {
+						if (OpenGLBindings::isMultiThreaded && OpenGLBindings::renderThread && OpenGLBindings::renderThread->IsRunning() && RenderThread::activePendingFrames >= RenderThread::MaxPendingFrames) {
 							RenderThread::hasPendingRenderRequest.exchange (true);
 							break;
 						}
@@ -965,6 +1032,9 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 	void SDLApplication::SetFrameRate (double frameRate) {
 
 		accumulator = 0.0;
+		#ifdef _WIN32
+		frameRate = FrameRateOverride ("NOVAFLARE_UPDATE_RATE", frameRate);
+		#endif
 
 		if (frameRate > 0) {
 
@@ -977,12 +1047,19 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 			if (perfFreq) periodPerfTicks = (uint64_t)(framePeriod * (double)perfFreq / 1000.0);
 
 		}
+		if (perfFreq) {
+			lastPerfCounter = SDL_GetPerformanceCounter ();
+			nextPerfCounter = lastPerfCounter + periodPerfTicks;
+		}
 	}
 
 
 	void SDLApplication::SetRenderFrameRate (double frameRate) {
 
 		accumulatorRender = 0.0;
+		#ifdef _WIN32
+		frameRate = FrameRateOverride ("NOVAFLARE_DRAW_RATE", frameRate);
+		#endif
 
 		if (frameRate > 0) {
 
@@ -995,15 +1072,32 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 			if (perfFreq) periodRenderPerfTicks = (uint64_t)(renderFramePeriod * (double)perfFreq / 1000.0);
 
 		}
+		if (perfFreq) {
+			lastRenderPerfCounter = SDL_GetPerformanceCounter ();
+			nextRenderPerfCounter = lastRenderPerfCounter +
+				periodRenderPerfTicks;
+		}
 
 	}
 
 
 	void SDLApplication::SetLockRender (bool split) {
 
+		#ifdef _WIN32
+		const char* overrideValue = std::getenv ("NOVAFLARE_SPLIT_RENDER");
+		if (overrideValue != NULL) {
+			if (overrideValue[0] == '1' && overrideValue[1] == '\0') split = true;
+			if (overrideValue[0] == '0' && overrideValue[1] == '\0') split = false;
+		}
+		#endif
 		lockRender = split;
 		if (split) {
 			accumulatorRender = 0;
+			if (perfFreq) {
+				lastRenderPerfCounter = SDL_GetPerformanceCounter ();
+				nextRenderPerfCounter = lastRenderPerfCounter +
+					periodRenderPerfTicks;
+			}
 		}
 
 	}
@@ -1088,7 +1182,8 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 
 		#else
 			bool updatePending = (nowPerf >= nextPerfCounter);
-			bool renderPending = (nowPerf >= nextRenderPerfCounter);
+			bool renderPending = lockRender &&
+				(nowPerf >= nextRenderPerfCounter);
 
 			if (updatePending) {
 				SDL_Event ev;
@@ -1121,15 +1216,10 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 			}
 
 			if (!updatePending && !renderPending) {
-				uint64_t nextEventCounter = (nextPerfCounter < nextRenderPerfCounter) ? nextPerfCounter : nextRenderPerfCounter;
-				if (nextEventCounter > nowPerf) {
-					uint64_t remainingTicks = nextEventCounter - nowPerf;
-					if (remainingTicks > perfFreq / 500) {
-						SDL_Delay (1);
-					} else {
-						LIME_PAUSE();
-					}
-				}
+				uint64_t nextEventCounter = lockRender &&
+					nextRenderPerfCounter < nextPerfCounter
+					? nextRenderPerfCounter : nextPerfCounter;
+				WaitForFrameDeadline (nextEventCounter, perfFreq);
 			}
 		}
 

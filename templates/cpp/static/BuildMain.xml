@@ -1,6 +1,12 @@
 <xml>
 
-	<include name="${HXCPP}/build-tool/BuildCommon.xml" />
+	<!-- NovaGC uses a from-scratch build frontend and deliberately does not
+	     expose stock hxcpp's BuildCommon.xml. Emit the ABI marker directly in
+	     the generated root Build.xml so the frontend can reject accidental ABI
+	     mixing, then select its minimal build contract. -->
+	<set name="HXCPP_ZGC_ABI" value="1" if="hxcpp_zgc" />
+	<include name="${HXCPP}/build-tool/NovaBuild.xml" if="hxcpp_zgc" />
+	<include name="${HXCPP}/build-tool/BuildCommon.xml" unless="hxcpp_zgc" />
 
 	<include name="${HXCPP}/project/thirdparty/mbedtls-files.xml" noerror="true" />
 	<set name="HAS_HXCPP_MBEDTLS_FILES" value="1" if="MBEDTLS_DIR" />

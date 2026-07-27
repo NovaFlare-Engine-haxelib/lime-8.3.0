@@ -5,6 +5,7 @@
 #include <sstream> 
 #include <stdio.h> 
 #include <chrono>
+#include <cstdlib>
 
 #ifdef HXCPP_TRACY
 #include <hx/TelemetryTracy.h>
@@ -19,13 +20,14 @@ namespace lime {
 
     RenderThread::RenderThread() : window(nullptr), context(nullptr), workerThread(nullptr), running(false), paused(false), contextHeld(false), swapInterval(1), workerWaiting(false), mainWaiting(false) {
         currentFrame = new Frame();
-        currentFrame->reserve(4096);
-        pendingFrame = nullptr;
+        currentFrame->reserve(1024);
         
-        // Pre-allocate pool
-        for (int i = 0; i < 15; ++i) {
+        // Keep only enough reusable frames for the bounded in-flight queue.
+        // Typical NovaFlare frames contain roughly 300 commands; reserving
+        // 4096 commands across 16 frames retained several MiB permanently.
+        for (int i = 0; i < MaxPendingFrames + 1; ++i) {
             Frame* frame = new Frame();
-            frame->reserve(4096);
+            frame->reserve(1024);
             if (!framePool.push(frame)) {
                 delete frame; 
             }
@@ -35,10 +37,12 @@ namespace lime {
     RenderThread::~RenderThread() { 
         Stop(); 
         
-        Frame* pending = pendingFrame.exchange(nullptr, std::memory_order_acq_rel);
-        if (pending) {
+        Frame* pending = nullptr;
+        while (pendingFrames.pop(pending)) {
+            if (activePendingFrames.load(std::memory_order_acquire) > 0) {
+                activePendingFrames.fetch_sub(1, std::memory_order_acq_rel);
+            }
             delete pending;
-            pending = nullptr;
         }
 
         if (currentFrame) {
@@ -83,11 +87,6 @@ namespace lime {
         } 
     } 
 
-    void RenderThread::PushCommand(std::function<void()> command) { 
-        // No lock needed for SPSC (Main Thread only)
-        currentFrame->push_back(std::move(command));
-    } 
-
     void RenderThread::Pause() {
         if (!running || paused) return;
         
@@ -122,6 +121,7 @@ namespace lime {
     }
 
     void RenderThread::Flip(bool forceWait) {
+        (void)forceWait;
         if (!running) return;
 
         if (paused) return;
@@ -129,18 +129,22 @@ namespace lime {
         if (!currentFrame->empty()) {
             Frame* nextFrame = nullptr;
             
-            // Wait for a free frame from pool
+            // A submitted frame is never discarded. If the bounded pool is
+            // temporarily exhausted, apply backpressure until the worker
+            // returns one.
             if (!framePool.pop(nextFrame)) {
-                if (forceWait) {
-                    std::unique_lock<std::mutex> lock(mutex);
-                    mainWaiting = true;
-                    condition.wait(lock, [this, &nextFrame] {
-                        return framePool.pop(nextFrame) || !running || paused;
-                    });
-                    mainWaiting = false;
-                    if (!running || paused) return;
-                } else {
-                    currentFrame->clear();
+                std::unique_lock<std::mutex> lock(mutex);
+                mainWaiting = true;
+                condition.wait(lock, [this, &nextFrame] {
+                    return framePool.pop(nextFrame) || !running;
+                });
+                mainWaiting = false;
+                if (!running) {
+                    if (nextFrame != nullptr) {
+                        while (!framePool.push(nextFrame)) {
+                            std::this_thread::yield();
+                        }
+                    }
                     return;
                 }
             }
@@ -150,23 +154,27 @@ namespace lime {
             currentFrame = nextFrame;
             currentFrame->clear();
 
-            Frame* replaced = pendingFrame.exchange(submitted, std::memory_order_acq_rel);
-            if (replaced != nullptr) {
-                if (!replaced->empty()) {
-                    replaced->clear();
+            // Publish the in-flight count before the queue item so the worker
+            // can never complete a frame before its submission is counted.
+            activePendingFrames.fetch_add(1, std::memory_order_acq_rel);
+            bool queued = pendingFrames.push(submitted);
+            while (!queued) {
+                std::unique_lock<std::mutex> lock(mutex);
+                mainWaiting = true;
+                condition.wait(lock, [this, submitted, &queued] {
+                    queued = pendingFrames.push(submitted);
+                    return queued || !running;
+                });
+                mainWaiting = false;
+                if (!queued && !running) {
+                    activePendingFrames.fetch_sub(
+                        1, std::memory_order_acq_rel);
+                    submitted->clear();
+                    while (!framePool.push(submitted)) {
+                        std::this_thread::yield();
+                    }
+                    return;
                 }
-
-                while (!framePool.push(replaced)) {
-                    std::unique_lock<std::mutex> lock(mutex);
-                    mainWaiting = true;
-                    condition.wait(lock, [this, replaced] {
-                        return framePool.push(replaced) || !running || paused;
-                    });
-                    mainWaiting = false;
-                    if (!running || paused) return;
-                }
-            } else {
-                activePendingFrames++;
             }
 
             {
@@ -213,6 +221,14 @@ namespace lime {
         #endif
 
         threadId = std::this_thread::get_id(); 
+        const char* perfTraceValue = std::getenv("NOVAGC_PERF_TRACE");
+        const bool perfTrace = perfTraceValue != nullptr &&
+            perfTraceValue[0] != '\0' && perfTraceValue[0] != '0';
+        auto perfWindowStarted = std::chrono::steady_clock::now();
+        std::uint64_t perfFrames = 0;
+        std::uint64_t perfCommands = 0;
+        std::uint64_t perfExecutionMicros = 0;
+        std::uint64_t perfMaximumExecutionMicros = 0;
 
         // Make context current on this thread 
         if (window && context) { 
@@ -264,39 +280,83 @@ namespace lime {
             
             Frame* frame = nullptr;
 
-            frame = pendingFrame.exchange(nullptr, std::memory_order_acq_rel);
+            pendingFrames.pop(frame);
 
             if (frame == nullptr) {
                 std::unique_lock<std::mutex> lock(mutex);
                 workerWaiting = true;
-                if (pendingFrame.load(std::memory_order_acquire) == nullptr && running && !paused && !hasPendingRenderRequest) {
-                    condition.wait(lock, [this] { 
-                        return pendingFrame.load(std::memory_order_acquire) != nullptr || !running || paused || hasPendingRenderRequest; 
+                if (pendingFrames.empty() && running && !paused && !hasPendingRenderRequest) {
+                    condition.wait(lock, [this] {
+                        return !pendingFrames.empty() || !running || paused || hasPendingRenderRequest;
                     });
                 }
                 workerWaiting = false;
-                
+
                 if (!running) break;
                 if (paused) continue;
                 
-                frame = pendingFrame.exchange(nullptr, std::memory_order_acq_rel);
+                pendingFrames.pop(frame);
             }
             
             if (frame) {
                 if (!frame->empty()) {
+                    const std::size_t commandCount = frame->size();
+                    const auto executionStarted =
+                        std::chrono::steady_clock::now();
                     for (auto& command : *frame) {
                         if (command) {
                             command();
                         }
                     }
+                    const std::uint64_t executionMicros =
+                        static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<
+                                std::chrono::microseconds>(
+                                    std::chrono::steady_clock::now() -
+                                    executionStarted).count());
                     frame->clear();
-                    
-                    activePendingFrames--;
+
+                    if (perfTrace) {
+                        ++perfFrames;
+                        perfCommands += commandCount;
+                        perfExecutionMicros += executionMicros;
+                        if (executionMicros > perfMaximumExecutionMicros)
+                            perfMaximumExecutionMicros = executionMicros;
+                        const auto now = std::chrono::steady_clock::now();
+                        if (now - perfWindowStarted >=
+                            std::chrono::seconds(1)) {
+                            const double averageCommands = perfFrames == 0
+                                ? 0.0
+                                : static_cast<double>(perfCommands) /
+                                    static_cast<double>(perfFrames);
+                            const double averageExecutionMs = perfFrames == 0
+                                ? 0.0
+                                : static_cast<double>(perfExecutionMicros) /
+                                    static_cast<double>(perfFrames) / 1000.0;
+                            std::printf(
+                                "perf:RenderThread frames=%llu commands=%llu "
+                                "avg_commands=%.2f exec_avg_ms=%.3f "
+                                "exec_max_ms=%.3f\n",
+                                static_cast<unsigned long long>(perfFrames),
+                                static_cast<unsigned long long>(perfCommands),
+                                averageCommands, averageExecutionMs,
+                                static_cast<double>(
+                                    perfMaximumExecutionMicros) / 1000.0);
+                            std::fflush(stdout);
+                            perfWindowStarted = now;
+                            perfFrames = 0;
+                            perfCommands = 0;
+                            perfExecutionMicros = 0;
+                            perfMaximumExecutionMicros = 0;
+                        }
+                    }
 
                     #ifdef HXCPP_TRACY
-                    FrameMarkNamed("RenderLoop"); 
+                    FrameMarkNamed("RenderLoop");
                     #endif
                 }
+
+                activePendingFrames.fetch_sub(1, std::memory_order_acq_rel);
                 
                 while (!framePool.push(frame)) {
                     std::unique_lock<std::mutex> lock(mutex);

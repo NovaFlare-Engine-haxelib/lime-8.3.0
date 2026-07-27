@@ -11,8 +11,122 @@
 #include <vector>
 #include <deque>
 #include <array>
+#include <cstddef>
+#include <new>
+#include <type_traits>
+#include <utility>
 
 namespace lime {
+
+    // libstdc++'s std::function stores only a very small callable inline.
+    // OpenGL command lambdas commonly capture several values, so the old
+    // queue performed a native heap allocation and free for nearly every GL
+    // call (hundreds of thousands per second at high frame rates). This
+    // move-only command keeps ordinary captures in the reusable Frame vector.
+    class RenderCommand {
+    public:
+        static constexpr std::size_t InlineBytes = 64;
+
+        RenderCommand() noexcept = default;
+
+        template<typename Callable,
+            std::enable_if_t<!std::is_same_v<std::decay_t<Callable>,
+                                                RenderCommand>, int> = 0>
+        explicit RenderCommand(Callable&& callable) {
+            using Function = std::decay_t<Callable>;
+            constexpr bool fitsInline = sizeof(Function) <= InlineBytes &&
+                alignof(Function) <= alignof(std::max_align_t) &&
+                std::is_nothrow_move_constructible_v<Function>;
+
+            invoke = [](void* value) {
+                (*static_cast<Function*>(value))();
+            };
+            if constexpr (fitsInline) {
+                ::new (static_cast<void*>(storage))
+                    Function(std::forward<Callable>(callable));
+                object = storage;
+                destroy = [](void* value) noexcept {
+                    static_cast<Function*>(value)->~Function();
+                };
+                moveInline = [](void* destination, void* source) noexcept {
+                    auto* input = static_cast<Function*>(source);
+                    ::new (destination) Function(std::move(*input));
+                    input->~Function();
+                };
+                inlineObject = true;
+            } else {
+                object = new Function(std::forward<Callable>(callable));
+                destroy = [](void* value) noexcept {
+                    delete static_cast<Function*>(value);
+                };
+            }
+        }
+
+        RenderCommand(const RenderCommand&) = delete;
+        RenderCommand& operator=(const RenderCommand&) = delete;
+
+        RenderCommand(RenderCommand&& other) noexcept {
+            moveFrom(other);
+        }
+
+        RenderCommand& operator=(RenderCommand&& other) noexcept {
+            if (this != &other) {
+                reset();
+                moveFrom(other);
+            }
+            return *this;
+        }
+
+        ~RenderCommand() {
+            reset();
+        }
+
+        explicit operator bool() const noexcept { return invoke != nullptr; }
+
+        void operator()() {
+            invoke(object);
+        }
+
+    private:
+        using Invoke = void (*)(void*);
+        using Destroy = void (*)(void*);
+        using MoveInline = void (*)(void*, void*);
+
+        void reset() noexcept {
+            if (destroy != nullptr && object != nullptr)
+                destroy(object);
+            object = nullptr;
+            invoke = nullptr;
+            destroy = nullptr;
+            moveInline = nullptr;
+            inlineObject = false;
+        }
+
+        void moveFrom(RenderCommand& other) noexcept {
+            invoke = other.invoke;
+            destroy = other.destroy;
+            moveInline = other.moveInline;
+            inlineObject = other.inlineObject;
+            if (other.inlineObject) {
+                moveInline(storage, other.object);
+                object = storage;
+            } else {
+                object = other.object;
+            }
+            other.object = nullptr;
+            other.invoke = nullptr;
+            other.destroy = nullptr;
+            other.moveInline = nullptr;
+            other.inlineObject = false;
+        }
+
+        alignas(std::max_align_t) unsigned char storage[InlineBytes];
+        void* object = nullptr;
+        Invoke invoke = nullptr;
+        Destroy destroy = nullptr;
+        MoveInline moveInline = nullptr;
+        bool inlineObject = false;
+    };
 
     template<typename T, size_t Size>
     class LockFreeQueue {
@@ -58,7 +172,12 @@ namespace lime {
         void RebindContext();
         void SetContext(SDL_GLContext context);
         
-        void PushCommand(std::function<void()> command);
+        template<typename Callable>
+        void PushCommand(Callable&& command) {
+            // Render submission is SPSC: only the stage thread appends to the
+            // current frame, and only the worker consumes submitted frames.
+            currentFrame->emplace_back(std::forward<Callable>(command));
+        }
         void Flip(bool forceWait = false);
         
         template<typename T>
@@ -85,6 +204,7 @@ namespace lime {
         void SetSwapInterval(int interval);
         bool WaitForContext(bool held, int timeoutMS);
         
+        static constexpr int MaxPendingFrames = 2;
         static std::atomic<int> activePendingFrames;
         static std::atomic<bool> hasPendingRenderRequest;
         std::atomic<bool> contextHeld;
@@ -107,10 +227,10 @@ namespace lime {
         std::mutex mutex;
         
         // Use pointers to vectors to avoid copying and enable lightweight swapping
-        using Frame = std::vector<std::function<void()>>;
+        using Frame = std::vector<RenderCommand>;
         
         LockFreeQueue<Frame*, 16> framePool;
-        std::atomic<Frame*> pendingFrame;
+        LockFreeQueue<Frame*, 16> pendingFrames;
         Frame* currentFrame;
         
         std::thread::id threadId;

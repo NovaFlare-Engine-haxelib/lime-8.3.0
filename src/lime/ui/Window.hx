@@ -654,6 +654,12 @@ class Window
 
 	@:noCompletion private function set_lockRender(value:Bool):Bool
 	{
+		#if ios
+		// NativeWindow forces the non-split iOS path because the platform frame
+		// pump has no independent render tick. Keep the public value in sync.
+		value = false;
+		#end
+
 		__backend.setLockRender(value);
 		return __lockRender = value;
 	}

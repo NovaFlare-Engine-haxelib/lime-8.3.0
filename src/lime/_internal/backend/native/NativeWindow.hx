@@ -715,6 +715,12 @@ class NativeWindow
 
 	public function setLockRender(value:Bool):Bool
 	{
+		#if ios
+		// The iOS frame pump does not dispatch a separate render event. Enabling
+		// split update/render would keep UPDATE running while RENDER never fires.
+		value = false;
+		#end
+
 		if (handle != null)
 		{
 			#if (!macro && lime_cffi)

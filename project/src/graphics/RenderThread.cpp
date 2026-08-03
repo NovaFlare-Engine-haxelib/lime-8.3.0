@@ -251,10 +251,11 @@ namespace lime {
                 if (window && context) {
                     if (SDL_GL_MakeCurrent(window, NULL) < 0) {
                         printf("RenderThread::Run: Pause context unbind failed: %s\n", SDL_GetError());
+                    } else {
+                        contextHeld = false;
+                        std::lock_guard<std::mutex> lock(mutex);
+                        condition.notify_all();
                     }
-                    contextHeld = false;
-                    std::lock_guard<std::mutex> lock(mutex);
-                    condition.notify_all();
                 }
 
                 {

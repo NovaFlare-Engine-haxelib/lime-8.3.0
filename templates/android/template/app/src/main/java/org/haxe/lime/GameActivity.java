@@ -159,13 +159,21 @@ public class GameActivity extends SDLActivity {
 	}
 
 
-	@Override public void onBackPressed () {
+	private void dispatchBackPressedToSDL () {
 
 		if (handleBackPressed ()) {
 
-			super.onBackPressed ();
+			SDLActivity.onNativeKeyDown (KeyEvent.KEYCODE_BACK);
+			SDLActivity.onNativeKeyUp (KeyEvent.KEYCODE_BACK);
 
 		}
+
+	}
+
+
+	@Override public void onBackPressed () {
+
+		dispatchBackPressedToSDL ();
 
 	}
 
@@ -267,17 +275,15 @@ public class GameActivity extends SDLActivity {
 
 		}
 
-		// Android 13+: Register predictive back gesture callback
-		// Fixes Android 16 back button exiting app instead of dispatching to extensions
+		// Android 13+: Route predictive back through SDL so Lime/Haxe receives
+		// the same APP_CONTROL_BACK event as it does on earlier Android versions.
 		if (Build.VERSION.SDK_INT >= 33) {
 			getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
 				OnBackInvokedDispatcher.PRIORITY_DEFAULT,
 				new OnBackInvokedCallback() {
 					@Override
 					public void onBackInvoked() {
-						if (handleBackPressed()) {
-							finish();
-						}
+						dispatchBackPressedToSDL();
 					}
 				}
 			);

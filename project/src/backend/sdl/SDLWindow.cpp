@@ -24,17 +24,75 @@ namespace lime {
 	}
 
     void SDLWindow::PauseRendering() {
-        //printf("SDLWindow::PauseRendering\n");
         for (auto window : windows) {
-            window->renderThread.Pause();
+            if (window->renderThread.IsRunning()) {
+                window->renderThread.Pause();
+            }
+        }
+
+        // Android destroys the EGLSurface on its Java UI thread and waits for
+        // SDL's event thread to release the GL context first.  With Lime's GL
+        // worker enabled, SDL does not own that context until we explicitly
+        // hand it back here.
+        for (auto window : windows) {
+            if (!window->renderThread.IsRunning()) continue;
+
+            if (!window->renderThread.WaitForContext(false, 450)) {
+                printf("SDLWindow::PauseRendering: Timed out waiting for the render thread to release its GL context\n");
+                continue;
+            }
+
+            if (window->sdlWindow && window->context
+                && SDL_GL_MakeCurrent(window->sdlWindow, window->context) < 0) {
+                printf("SDLWindow::PauseRendering: Failed to return GL context to SDL: %s\n", SDL_GetError());
+            }
         }
     }
 
     void SDLWindow::ResumeRendering() {
-        //printf("SDLWindow::ResumeRendering\n");
+        // SDL may have recreated both the EGLSurface and EGLContext while the
+        // app was in the background.  Capture the context it restored on this
+        // thread before transferring ownership back to Lime's GL worker.
+        SDL_Window* currentWindow = SDL_GL_GetCurrentWindow();
+        SDL_GLContext currentContext = SDL_GL_GetCurrentContext();
+        bool contextTransferred = false;
+
         for (auto window : windows) {
-            window->renderThread.Resume();
-            window->renderThread.RebindContext();
+            if (!window->renderThread.IsRunning()) continue;
+
+            if (currentContext && (!currentWindow || window->sdlWindow == currentWindow)) {
+                window->SetGLContext(currentContext);
+                contextTransferred = true;
+            }
+        }
+
+        if (contextTransferred) {
+            SDL_Window* releaseWindow = currentWindow;
+            if (!releaseWindow) {
+                for (auto window : windows) {
+                    if (window->renderThread.IsRunning()) {
+                        releaseWindow = window->sdlWindow;
+                        break;
+                    }
+                }
+            }
+
+            if (releaseWindow && SDL_GL_MakeCurrent(releaseWindow, NULL) < 0) {
+                printf("SDLWindow::ResumeRendering: Failed to release SDL's restored GL context: %s\n", SDL_GetError());
+            }
+        }
+
+        for (auto window : windows) {
+            if (window->renderThread.IsRunning()) {
+                window->renderThread.Resume();
+            }
+        }
+
+        for (auto window : windows) {
+            if (window->renderThread.IsRunning()
+                && !window->renderThread.WaitForContext(true, 450)) {
+                printf("SDLWindow::ResumeRendering: Timed out waiting for the render thread to acquire its GL context\n");
+            }
         }
     }
 

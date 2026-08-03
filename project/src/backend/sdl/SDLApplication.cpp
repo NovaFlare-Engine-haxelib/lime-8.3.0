@@ -317,7 +317,7 @@ namespace lime {
 			case SDL_APP_WILLENTERBACKGROUND:
 
 				inBackground = true;
-				//SDLWindow::PauseRendering();
+				SDLWindow::PauseRendering();
 
 				windowEvent.type = WINDOW_DEACTIVATE;
 				WindowEvent::Dispatch (&windowEvent);
@@ -424,6 +424,8 @@ namespace lime {
 
 			#ifndef EMSCRIPTEN
 			case SDL_RENDER_DEVICE_RESET:
+
+				SDLWindow::OnRenderDeviceReset();
 
 				renderEvent.type = RENDER_CONTEXT_LOST;
 				RenderEvent::Dispatch (&renderEvent);

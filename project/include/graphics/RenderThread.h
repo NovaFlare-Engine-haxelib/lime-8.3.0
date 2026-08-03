@@ -30,36 +30,20 @@ namespace lime {
         RenderCommand() noexcept = default;
 
         template<typename Callable,
-            std::enable_if_t<!std::is_same_v<std::decay_t<Callable>,
-                                                RenderCommand>, int> = 0>
+            typename std::enable_if<!std::is_same<
+                typename std::decay<Callable>::type,
+                RenderCommand>::value, int>::type = 0>
         explicit RenderCommand(Callable&& callable) {
-            using Function = std::decay_t<Callable>;
+            using Function = typename std::decay<Callable>::type;
             constexpr bool fitsInline = sizeof(Function) <= InlineBytes &&
                 alignof(Function) <= alignof(std::max_align_t) &&
-                std::is_nothrow_move_constructible_v<Function>;
+                std::is_nothrow_move_constructible<Function>::value;
 
             invoke = [](void* value) {
                 (*static_cast<Function*>(value))();
             };
-            if constexpr (fitsInline) {
-                ::new (static_cast<void*>(storage))
-                    Function(std::forward<Callable>(callable));
-                object = storage;
-                destroy = [](void* value) noexcept {
-                    static_cast<Function*>(value)->~Function();
-                };
-                moveInline = [](void* destination, void* source) noexcept {
-                    auto* input = static_cast<Function*>(source);
-                    ::new (destination) Function(std::move(*input));
-                    input->~Function();
-                };
-                inlineObject = true;
-            } else {
-                object = new Function(std::forward<Callable>(callable));
-                destroy = [](void* value) noexcept {
-                    delete static_cast<Function*>(value);
-                };
-            }
+            initialize<Function>(std::forward<Callable>(callable),
+                std::integral_constant<bool, fitsInline>());
         }
 
         RenderCommand(const RenderCommand&) = delete;
@@ -91,6 +75,30 @@ namespace lime {
         using Invoke = void (*)(void*);
         using Destroy = void (*)(void*);
         using MoveInline = void (*)(void*, void*);
+
+        template<typename Function, typename Callable>
+        void initialize(Callable&& callable, std::true_type) {
+            ::new (static_cast<void*>(storage))
+                Function(std::forward<Callable>(callable));
+            object = storage;
+            destroy = [](void* value) noexcept {
+                static_cast<Function*>(value)->~Function();
+            };
+            moveInline = [](void* destination, void* source) noexcept {
+                Function* input = static_cast<Function*>(source);
+                ::new (destination) Function(std::move(*input));
+                input->~Function();
+            };
+            inlineObject = true;
+        }
+
+        template<typename Function, typename Callable>
+        void initialize(Callable&& callable, std::false_type) {
+            object = new Function(std::forward<Callable>(callable));
+            destroy = [](void* value) noexcept {
+                delete static_cast<Function*>(value);
+            };
+        }
 
         void reset() noexcept {
             if (destroy != nullptr && object != nullptr)

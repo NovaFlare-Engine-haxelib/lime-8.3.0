@@ -66,6 +66,13 @@ namespace lime {
             }
         }
 
+		// SetMultiThreaded(false) pauses the worker but deliberately leaves it
+		// running. In direct mode SDL restored the context on this (application)
+		// thread, so keep it here instead of handing it back to the paused worker.
+		if (!OpenGLBindings::isMultiThreaded) {
+			return;
+		}
+
         if (contextTransferred) {
             SDL_Window* releaseWindow = currentWindow;
             if (!releaseWindow) {
@@ -105,7 +112,9 @@ namespace lime {
 		for (auto window : windows) {
 			if (!currentWindow || window->sdlWindow == currentWindow) {
 				window->SetGLContext (currentContext);
-				window->renderThread.RebindContext ();
+				if (OpenGLBindings::isMultiThreaded) {
+					window->renderThread.RebindContext ();
+				}
 			}
 		}
 	}
@@ -628,7 +637,7 @@ namespace lime {
 	void SDLWindow::ContextMakeCurrent () {
 
 		// If render thread is running, DO NOT allow main thread to steal context
-		if (renderThread.IsRunning()) {
+		if (renderThread.IsRunning() && OpenGLBindings::isMultiThreaded) {
 			//printf("[SDLWindow] ContextMakeCurrent ignored on main thread because RenderThread is running.\n");
 			return;
 		}
@@ -645,7 +654,7 @@ namespace lime {
 	void SDLWindow::ContextMakeCurrent (void* context) {
 
 		// If render thread is running, DO NOT allow main thread to steal context
-		if (renderThread.IsRunning()) {
+		if (renderThread.IsRunning() && OpenGLBindings::isMultiThreaded) {
 			// printf("[SDLWindow] ContextMakeCurrent(ptr) ignored on main thread because RenderThread is running.\n");
 			return;
 		}

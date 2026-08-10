@@ -1124,7 +1124,9 @@
         FT_Renderer  renderer = ft_lookup_glyph_renderer( slot );
 
 
-        if ( renderer )
+        if ( renderer                         &&
+             renderer->clazz                  &&
+             renderer->clazz->transform_glyph )
           error = renderer->clazz->transform_glyph(
                                      renderer, slot,
                                      &internal->transform_matrix,

@@ -5,6 +5,8 @@ import lime._internal.backend.native.NativeCFFI;
 import lime.app.Application;
 import lime.graphics.RenderContextAttributes;
 import lime.math.Rectangle;
+import lime.system.Locale;
+import lime.system.Theme;
 import lime.ui.WindowAttributes;
 import lime.utils.ArrayBuffer;
 import lime.utils.UInt8Array;
@@ -45,8 +47,6 @@ extern "C" {
 #endif
 ')
 #end
-import lime.system.Theme;
-import lime.system.Locale;
 class System
 {
 	/**

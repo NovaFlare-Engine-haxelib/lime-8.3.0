@@ -1160,7 +1160,26 @@ namespace lime {
 	}
 
 
-	int Font::GetHeight () {
+	
+	void* Font::GetKerning (int leftIndex, int rightIndex) {
+
+		FT_Vector kerning;
+
+		if (FT_Get_Kerning ((FT_Face)face, leftIndex, rightIndex, FT_KERNING_DEFAULT, &kerning) == 0) {
+
+			value metrics = alloc_empty_object ();
+			alloc_field (metrics, val_id ("x"), alloc_int (kerning.x));
+			alloc_field (metrics, val_id ("y"), alloc_int (kerning.y));
+			return metrics;
+
+		}
+
+		return alloc_null ();
+
+	}
+
+
+int Font::GetHeight () {
 
 		#ifdef LIME_FREETYPE_SWF_METRICS
 

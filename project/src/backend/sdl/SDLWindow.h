@@ -62,6 +62,10 @@ namespace lime {
 			virtual const char* SetTitle (const char* title);
 			virtual bool SetVisible (bool visible);
 			virtual void WarpMouse (int x, int y);
+
+			virtual void* GetHandle ();
+			virtual bool SetVSyncMode (int mode);
+			virtual bool SetAlwaysOnTop (bool alwaysOnTop);
 			SDL_Renderer* sdlRenderer;
 			SDL_Texture* sdlTexture;
 			SDL_Window* sdlWindow;

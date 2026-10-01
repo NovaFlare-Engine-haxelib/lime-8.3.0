@@ -8,6 +8,7 @@ import lime.graphics.Image;
 import lime.graphics.ImageBuffer;
 import lime.math.Vector2;
 import lime.net.HTTPRequest;
+import lime.text.GlyphKerning;
 import lime.system.CFFI;
 import lime.system.System;
 import lime.utils.Assets;
@@ -312,6 +313,27 @@ class Font
 		metrics.verticalBearing = new Vector2(value.verticalBearingX, value.verticalBearingY);
 
 		return metrics;
+	#else
+		return null;
+	#end
+	}
+
+	/**
+     	* Retrieves kerning vector between two glyphs.
+     	*
+     	* @param leftGlyph The left glyph in the kern pair.
+     	* @param rightGlyph The right glyph in the kern pair.
+     	* @return A `GlyphKerning` instance containing the kerning vector between the given glyphs.
+     	*/
+	public function getGlyphKerning(leftGlyph:Glyph, rightGlyph:Glyph):GlyphKerning
+	{
+		#if (lime_cffi && !macro)
+		var value:Dynamic = NativeCFFI.lime_font_get_glyph_kerning(src, leftGlyph, rightGlyph);
+
+		var kerning = new GlyphKerning();
+		kerning.x = value.x;
+		kerning.y = value.y;
+		return kerning;
 		#else
 		return null;
 		#end

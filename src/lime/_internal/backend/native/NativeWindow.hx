@@ -273,6 +273,42 @@ class NativeWindow
 		}
 	}
 
+	public function setVSyncMode(mode:lime.ui.WindowVSyncMode):Bool
+	{
+		if (handle != null)
+		{
+			#if (!macro && lime_cffi)
+			return NativeCFFI.lime_window_set_vsync_mode(handle, mode);
+			#end
+		}
+
+		return false;
+	}
+
+	public function getNativeHandle():Dynamic
+	{
+		if (handle != null)
+		{
+			#if (!macro && lime_cffi)
+			return NativeCFFI.lime_window_get_handle(handle);
+			#end
+		}
+
+		return null;
+	}
+
+	public function setAlwaysOnTop(value:Bool):Bool
+	{
+		if (handle != null)
+		{
+			#if (!macro && lime_cffi)
+			return NativeCFFI.lime_window_set_always_on_top(handle, value);
+			#end
+		}
+
+		return value;
+	}
+
 	public function close():Void
 	{
 		if (!closing)

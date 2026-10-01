@@ -146,6 +146,7 @@ class Window
 	public var width(get, set):Int;
 	public var x(get, set):Int;
 	public var y(get, set):Int;
+	public var alwaysOnTop(get, set):Bool;
 
 	@:allow(openfl.display.Stage)
 	@:allow(lime.app.Application)
@@ -168,6 +169,7 @@ class Window
 	@:noCompletion private var __y:Int;
 	@:noCompletion private var __minWidth:Int = 0;
 	@:noCompletion private var __minHeight:Int = 0;
+	@:noCompletion private var __alwaysOnTop:Bool = false;
 	@:noCompletion private var __maxWidth:Int = 0x7FFFFFFF;
 	@:noCompletion private var __maxHeight:Int = 0x7FFFFFFF;
 	@:noCompletion private var __lockRender:Bool = false;
@@ -198,6 +200,7 @@ class Window
 				"textInputEnabled": {get: p.get_textInputEnabled, set: p.set_textInputEnabled},
 				"title": {get: p.get_title, set: p.set_title},
 				"visible": {get: p.get_visible, set: p.set_visible},
+				"alwaysOnTop": {get: p.get_alwaysOnTop, set: p.set_alwaysOnTop},
 				"width": {get: p.get_width, set: p.set_width},
 				"x": {get: p.get_x, set: p.set_y},
 				"y": {get: p.get_x, set: p.set_y}
@@ -444,6 +447,16 @@ class Window
 	public function alert(message:String = null, title:String = null):Void
 	{
 		__backend.alert(message, title);
+	}
+
+	public function setVSyncMode(mode:lime.ui.WindowVSyncMode):Bool
+	{
+		return __backend.setVSyncMode(mode);
+	}
+
+	public function getNativeHandle():Dynamic
+	{
+		return __backend.getNativeHandle();
 	}
 
 	public function close():Void
@@ -802,6 +815,16 @@ class Window
 	{
 		__hidden = !__backend.setVisible(value);
 		return !__hidden;
+	}
+
+	@:noCompletion private inline function get_alwaysOnTop():Bool
+	{
+		return __alwaysOnTop;
+	}
+
+	@:noCompletion private function set_alwaysOnTop(value:Bool):Bool
+	{
+		return __alwaysOnTop = __backend.setAlwaysOnTop(value);
 	}
 
 	@:noCompletion private inline function get_width():Int

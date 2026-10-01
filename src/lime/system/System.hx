@@ -45,6 +45,8 @@ extern "C" {
 #endif
 ')
 #end
+import lime.system.Theme;
+import lime.system.Locale;
 class System
 {
 	/**
@@ -949,4 +951,94 @@ class System
 	var DOCUMENTS = 3;
 	var FONTS = 4;
 	var USER = 5;
+public static function getHint(key:String):String
+	{
+		if (key != null)
+		{
+			#if (lime_cffi && !macro)
+			return NativeCFFI.lime_system_get_hint(key);
+			#end
+		}
+
+		return null;
+	}
+
+public static function setHint(key:String, value:String):Void
+	{
+		if (key != null && value != null)
+		{
+			#if (lime_cffi && !macro)
+			return NativeCFFI.lime_system_set_hint(key, value);
+			#end
+		}
+	}
+
+public static function getPreferredLocales():Array<Locale>
+	{
+		var preferredLocales:Array<Locale> = [];
+
+		#if (lime_cffi && !macro)
+		var locales:Array<Dynamic> = NativeCFFI.lime_system_get_preferred_locales();
+
+		if (locales != null && locales.length > 0)
+		{
+			for (locale in locales)
+			{
+				var preferredLocale:Locale = new Locale();
+				preferredLocale.language = locale.language;
+				preferredLocale.country = locale.country;
+				preferredLocales.push(preferredLocale);
+			}
+		}
+		#elseif html5
+		var locales:Array<String> = [];
+
+		if (js.Browser.navigator.languages != null && js.Browser.navigator.languages.length > 0)
+		{
+			locales = js.Browser.navigator.languages;
+		}
+		else if (js.Browser.navigator.language != null)
+		{
+			locales = [js.Browser.navigator.language];
+		}
+
+		if (locales != null && locales.length > 0)
+		{
+			for (locale in locales)
+			{
+				var parts:Array<String> = locale.indexOf("-") != -1 ? locale.split("-") : locale.split("_");
+
+				if (parts.length > 0)
+				{
+					var preferredLocale:Locale = new Locale();
+					preferredLocale.language = parts[0];
+					preferredLocale.country = parts.length > 1 ? parts[1] : null;
+					preferredLocales.push(preferredLocale);
+				}
+			}
+		}
+		#end
+
+		return preferredLocales;
+	}
+
+	public static function getTheme():Theme
+	{
+		#if (js || electron)
+		if (Browser.window.matchMedia('(prefers-color-scheme: dark)').matches)
+		{
+			return Theme.DARK;
+		}
+		else if (Browser.window.matchMedia('(prefers-color-scheme: light)').matches)
+		{
+			return Theme.LIGHT;
+		}
+
+		return Theme.UNKNOWN;
+		#elseif (lime_cffi && !macro)
+		return cast NativeCFFI.lime_system_get_theme();
+		#else
+		return Theme.UNKNOWN;
+		#end
+	}
 }

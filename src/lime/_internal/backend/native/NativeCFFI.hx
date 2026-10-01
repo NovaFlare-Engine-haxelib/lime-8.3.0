@@ -56,6 +56,7 @@ class NativeCFFI
 	#if (cpp && !cppia)
 	#if (disable_cffi || haxe_ver < "3.4.0")
 	@:cffi private static function lime_application_create():Dynamic;
+@:cffi private static function lime_application_alert(type:lime.ui.MessageBoxType, message:String, title:String, buttons:Array<String>):Int;
 
 	@:cffi private static function lime_application_event_manager_register(callback:Dynamic, eventObject:Dynamic):Void;
 
@@ -120,6 +121,9 @@ class NativeCFFI
 	@:cffi private static function lime_file_watcher_update(handle:CFFIPointer):Void;
 
 	@:cffi private static function lime_font_get_ascender(handle:Dynamic):Int;
+@:cffi private static function lime_font_shutdown_library():Void;
+@:cffi private static function lime_font_initialize_library():Void;
+@:cffi private static function lime_font_get_glyph_kerning(handle:Dynamic, leftGlyph:Glyph, rightGlyph:Glyph):GlyphKerning;
 
 	@:cffi private static function lime_font_get_descender(handle:Dynamic):Int;
 
@@ -160,6 +164,7 @@ class NativeCFFI
 	@:cffi private static function lime_font_set_size(handle:Dynamic, size:Int, dpi:Int):Void;
 
 	@:cffi private static function lime_gamepad_add_mappings(mappings:Dynamic):Void;
+@:cffi private static function lime_gamepad_set_led(id:Int, red:Int, green:Int, blue:Int):Void;
 
 	@:cffi private static function lime_gamepad_get_device_guid(id:Int):Dynamic;
 
@@ -216,6 +221,8 @@ class NativeCFFI
 	@:cffi private static function lime_image_data_util_unmultiply_alpha(image:Dynamic):Void;
 
 	@:cffi private static function lime_joystick_get_device_guid(id:Int):Dynamic;
+@:cffi private static function lime_joystick_set_led(id:Int, red:Int, green:Int, blue:Int):Void;
+@:cffi private static function lime_joystick_rumble(id:Int, lowFrequencyRumble:Float, highFrequencyRumble:Float, duration:Int):Void;
 
 	@:cffi private static function lime_joystick_get_device_name(id:Int):Dynamic;
 
@@ -254,6 +261,7 @@ class NativeCFFI
 	@:cffi private static function lime_render_event_manager_register(callback:Dynamic, eventObject:Dynamic):Void;
 
 	@:cffi private static function lime_sensor_event_manager_register(callback:Dynamic, eventObject:Dynamic):Void;
+@:cffi private static function lime_gesture_event_manager_register(callback:Dynamic, eventObject:Dynamic):Void;
 
 	@:cffi private static function lime_system_get_allow_screen_timeout():Bool;
 
@@ -274,6 +282,13 @@ class NativeCFFI
 	@:cffi private static function lime_system_get_device_orientation():Int;
 
 	@:cffi private static function lime_system_get_platform_label():Dynamic;
+@:cffi private static function lime_system_set_hint(key:String, value:String):Void;
+@:cffi private static function lime_system_get_theme():Theme;
+@:cffi private static function lime_system_get_preferred_locales():Array<Locale>;
+@:cffi private static function lime_system_get_hint(key:String):String;
+@:cffi private static function lime_system_get_first_gyroscope_sensor_id():Int;
+@:cffi private static function lime_system_get_first_accelerometer_sensor_id():Int;
+@:cffi private static function lime_bytes_write_file(path:String, bytes:Dynamic):Void;
 
 	@:cffi private static function lime_system_get_platform_name():Dynamic;
 
@@ -288,8 +303,14 @@ class NativeCFFI
 	@:cffi private static function lime_text_event_manager_register(callback:Dynamic, eventObject:Dynamic):Void;
 
 	@:cffi private static function lime_touch_event_manager_register(callback:Dynamic, eventObject:Dynamic):Void;
+@:cffi private static function lime_touch_get_devices():Array<Int>;
+@:cffi private static function lime_touch_get_device_type(id:Int):TouchDeviceType;
+@:cffi private static function lime_touch_get_device_name(id:Int):Dynamic;
 
 	@:cffi private static function lime_window_alert(handle:Dynamic, message:String, title:String):Void;
+@:cffi private static function lime_window_set_vsync_mode(handle:Dynamic, mode:Int):Bool;
+@:cffi private static function lime_window_set_always_on_top(handle:Dynamic, alwaysOnTop:Bool):Bool;
+@:cffi private static function lime_window_get_handle(handle:Dynamic):Float;
 
 	@:cffi private static function lime_window_close(handle:Dynamic):Void;
 
@@ -382,6 +403,7 @@ class NativeCFFI
 	@:cffi private static function lime_zlib_decompress(data:Dynamic, bytes:Dynamic):Dynamic;
 	#else
 	private static var lime_application_create = new cpp.Callable<Void->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_application_create", "o", false));
+private static var lime_application_alert = new cpp.Callable<cpp.Object->Int->String->String->cpp.Object->Int>(cpp.Prime._loadPrime("lime", "lime_application_alert", "oissoi", false));
 	private static var lime_application_event_manager_register = new cpp.Callable<cpp.Object->cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime",
 		"lime_application_event_manager_register", "oov", false));
 	private static var lime_application_exec = new cpp.Callable<cpp.Object->Int>(cpp.Prime._loadPrime("lime", "lime_application_exec", "oi", false));
@@ -438,6 +460,9 @@ class NativeCFFI
 	private static var lime_file_watcher_update = new cpp.Callable<cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_file_watcher_update", "ov",
 		false));
 	private static var lime_font_get_ascender = new cpp.Callable<cpp.Object->Int>(cpp.Prime._loadPrime("lime", "lime_font_get_ascender", "oi", false));
+private static var lime_font_shutdown_library = new cpp.Callable<Void->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_font_shutdown_library", "v", false));
+private static var lime_font_initialize_library = new cpp.Callable<Void->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_font_initialize_library", "v", false));
+private static var lime_font_get_glyph_kerning = new cpp.Callable<cpp.Object->Int->Int->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_font_get_glyph_kerning", "oiio", false));
 	private static var lime_font_get_descender = new cpp.Callable<cpp.Object->Int>(cpp.Prime._loadPrime("lime", "lime_font_get_descender", "oi", false));
 	private static var lime_font_get_family_name = new cpp.Callable<cpp.Object->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_font_get_family_name", "oo",
 		false));
@@ -469,6 +494,7 @@ class NativeCFFI
 		"lime_font_render_glyphs", "oooo", false));
 	private static var lime_font_set_size = new cpp.Callable<cpp.Object->Int->Int->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_font_set_size", "oiiv", false));
 	private static var lime_gamepad_add_mappings = new cpp.Callable<cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_gamepad_add_mappings", "ov",
+private static var lime_gamepad_set_led = new cpp.Callable<Int->Int->Int->Int->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_gamepad_set_led", "iiiiv", false));
 		false));
 	private static var lime_gamepad_get_device_guid = new cpp.Callable<Int->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_gamepad_get_device_guid", "io",
 		false));
@@ -518,6 +544,8 @@ class NativeCFFI
 	private static var lime_image_data_util_unmultiply_alpha = new cpp.Callable<cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime",
 		"lime_image_data_util_unmultiply_alpha", "ov", false));
 	private static var lime_joystick_get_device_guid = new cpp.Callable<Int->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_joystick_get_device_guid", "io",
+private static var lime_joystick_set_led = new cpp.Callable<Int->Int->Int->Int->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_joystick_set_led", "iiiiv", false));
+private static var lime_joystick_rumble = new cpp.Callable<Int->Float->Float->Int->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_joystick_rumble", "iddiv", false));
 		false));
 	private static var lime_joystick_get_device_name = new cpp.Callable<Int->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_joystick_get_device_name", "io",
 		false));
@@ -552,6 +580,7 @@ class NativeCFFI
 	private static var lime_render_event_manager_register = new cpp.Callable<cpp.Object->cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime",
 		"lime_render_event_manager_register", "oov", false));
 	private static var lime_sensor_event_manager_register = new cpp.Callable<cpp.Object->cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime",
+private static var lime_gesture_event_manager_register = new cpp.Callable<cpp.Object->cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_gesture_event_manager_register", "oov", false));
 		"lime_sensor_event_manager_register", "oov", false));
 	private static var lime_system_get_allow_screen_timeout = new cpp.Callable<Void->Bool>(cpp.Prime._loadPrime("lime",
 		"lime_system_get_allow_screen_timeout", "b", false));
@@ -568,6 +597,13 @@ class NativeCFFI
 	private static var lime_system_get_num_displays = new cpp.Callable<Void->Int>(cpp.Prime._loadPrime("lime", "lime_system_get_num_displays", "i", false));
 	private static var lime_system_get_device_orientation = new cpp.Callable<Void->Int>(cpp.Prime._loadPrime("lime", "lime_system_get_device_orientation", "i", false));
 	private static var lime_system_get_platform_label = new cpp.Callable<Void->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_system_get_platform_label", "o",
+private static var lime_system_set_hint = new cpp.Callable<String->String->Void>(cpp.Prime._loadPrime("lime", "lime_system_set_hint", "ssv", false));
+private static var lime_system_get_theme = new cpp.Callable<Void->Int>(cpp.Prime._loadPrime("lime", "lime_system_get_theme", "i", false));
+private static var lime_system_get_preferred_locales = new cpp.Callable<Void->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_system_get_preferred_locales", "o", false));
+private static var lime_system_get_hint = new cpp.Callable<String->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_system_get_hint", "so", false));
+private static var lime_system_get_first_gyroscope_sensor_id = new cpp.Callable<Void->Int>(cpp.Prime._loadPrime("lime", "lime_system_get_first_gyroscope_sensor_id", "i", false));
+private static var lime_system_get_first_accelerometer_sensor_id = new cpp.Callable<Void->Int>(cpp.Prime._loadPrime("lime", "lime_system_get_first_accelerometer_sensor_id", "i", false));
+private static var lime_bytes_write_file = new cpp.Callable<String->cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_bytes_write_file", "sov", false));
 		false));
 	private static var lime_system_get_platform_name = new cpp.Callable<Void->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_system_get_platform_name", "o",
 		false));
@@ -579,8 +615,14 @@ class NativeCFFI
 	private static var lime_text_event_manager_register = new cpp.Callable<cpp.Object->cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime",
 		"lime_text_event_manager_register", "oov", false));
 	private static var lime_touch_event_manager_register = new cpp.Callable<cpp.Object->cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime",
+private static var lime_touch_get_devices = new cpp.Callable<Void->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_touch_get_devices", "o", false));
+private static var lime_touch_get_device_type = new cpp.Callable<Int->Int>(cpp.Prime._loadPrime("lime", "lime_touch_get_device_type", "ii", false));
+private static var lime_touch_get_device_name = new cpp.Callable<Int->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_touch_get_device_name", "io", false));
 		"lime_touch_event_manager_register", "oov", false));
 	private static var lime_window_alert = new cpp.Callable<cpp.Object->String->String->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_window_alert", "ossv",
+private static var lime_window_set_vsync_mode = new cpp.Callable<cpp.Object->Int->Bool>(cpp.Prime._loadPrime("lime", "lime_window_set_vsync_mode", "oib", false));
+private static var lime_window_set_always_on_top = new cpp.Callable<cpp.Object->Bool->Bool>(cpp.Prime._loadPrime("lime", "lime_window_set_always_on_top", "obb", false));
+private static var lime_window_get_handle = new cpp.Callable<cpp.Object->Float>(cpp.Prime._loadPrime("lime", "lime_window_get_handle", "od", false));
 		false));
 	private static var lime_window_close = new cpp.Callable<cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_window_close", "ov", false));
 	private static var lime_window_context_flip = new cpp.Callable<cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_window_context_flip", "ov",
@@ -664,6 +706,7 @@ class NativeCFFI
 	#end
 	#if (neko || cppia)
 	private static var lime_application_create = CFFI.load("lime", "lime_application_create", 0);
+private static var lime_application_alert = CFFI.load("lime", "lime_application_alert", 5);
 	private static var lime_application_event_manager_register = CFFI.load("lime", "lime_application_event_manager_register", 2);
 	private static var lime_application_exec = CFFI.load("lime", "lime_application_exec", 1);
 	private static var lime_application_init = CFFI.load("lime", "lime_application_init", 1);
@@ -696,6 +739,9 @@ class NativeCFFI
 	private static var lime_file_watcher_remove_directory = CFFI.load("lime", "lime_file_watcher_remove_directory", 2);
 	private static var lime_file_watcher_update = CFFI.load("lime", "lime_file_watcher_update", 1);
 	private static var lime_font_get_ascender = CFFI.load("lime", "lime_font_get_ascender", 1);
+private static var lime_font_shutdown_library = CFFI.load("lime", "lime_font_shutdown_library", 0);
+private static var lime_font_initialize_library = CFFI.load("lime", "lime_font_initialize_library", 0);
+private static var lime_font_get_glyph_kerning = CFFI.load("lime", "lime_font_get_glyph_kerning", 3);
 	private static var lime_font_get_descender = CFFI.load("lime", "lime_font_get_descender", 1);
 	private static var lime_font_get_family_name = CFFI.load("lime", "lime_font_get_family_name", 1);
 	private static var lime_font_get_glyph_index = CFFI.load("lime", "lime_font_get_glyph_index", 2);
@@ -716,6 +762,7 @@ class NativeCFFI
 	private static var lime_font_render_glyphs = CFFI.load("lime", "lime_font_render_glyphs", 3);
 	private static var lime_font_set_size = CFFI.load("lime", "lime_font_set_size", 3);
 	private static var lime_gamepad_add_mappings = CFFI.load("lime", "lime_gamepad_add_mappings", 1);
+private static var lime_gamepad_set_led = CFFI.load("lime", "lime_gamepad_set_led", 4);
 	private static var lime_gamepad_get_device_guid = CFFI.load("lime", "lime_gamepad_get_device_guid", 1);
 	private static var lime_gamepad_get_device_name = CFFI.load("lime", "lime_gamepad_get_device_name", 1);
 	private static var lime_gamepad_rumble = CFFI.load("lime", "lime_gamepad_rumble", 4);
@@ -742,6 +789,8 @@ class NativeCFFI
 	private static var lime_image_data_util_threshold = CFFI.load("lime", "lime_image_data_util_threshold", -1);
 	private static var lime_image_data_util_unmultiply_alpha = CFFI.load("lime", "lime_image_data_util_unmultiply_alpha", 1);
 	private static var lime_joystick_get_device_guid = CFFI.load("lime", "lime_joystick_get_device_guid", 1);
+private static var lime_joystick_set_led = CFFI.load("lime", "lime_joystick_set_led", 4);
+private static var lime_joystick_rumble = CFFI.load("lime", "lime_joystick_rumble", 4);
 	private static var lime_joystick_get_device_name = CFFI.load("lime", "lime_joystick_get_device_name", 1);
 	private static var lime_joystick_get_num_axes = CFFI.load("lime", "lime_joystick_get_num_axes", 1);
 	private static var lime_joystick_get_num_buttons = CFFI.load("lime", "lime_joystick_get_num_buttons", 1);
@@ -761,6 +810,7 @@ class NativeCFFI
 	private static var lime_png_decode_file = CFFI.load("lime", "lime_png_decode_file", 3);
 	private static var lime_render_event_manager_register = CFFI.load("lime", "lime_render_event_manager_register", 2);
 	private static var lime_sensor_event_manager_register = CFFI.load("lime", "lime_sensor_event_manager_register", 2);
+private static var lime_gesture_event_manager_register = CFFI.load("lime", "lime_gesture_event_manager_register", 2);
 	private static var lime_system_get_allow_screen_timeout = CFFI.load("lime", "lime_system_get_allow_screen_timeout", 0);
 	private static var lime_system_set_allow_screen_timeout = CFFI.load("lime", "lime_system_set_allow_screen_timeout", 1);
 	private static var lime_system_get_device_model = CFFI.load("lime", "lime_system_get_device_model", 0);
@@ -771,6 +821,13 @@ class NativeCFFI
 	private static var lime_system_get_num_displays = CFFI.load("lime", "lime_system_get_num_displays", 0);
 	private static var lime_system_get_device_orientation = CFFI.load("lime", "lime_system_get_device_orientation", 0);
 	private static var lime_system_get_platform_label = CFFI.load("lime", "lime_system_get_platform_label", 0);
+private static var lime_system_set_hint = CFFI.load("lime", "lime_system_set_hint", 2);
+private static var lime_system_get_theme = CFFI.load("lime", "lime_system_get_theme", 0);
+private static var lime_system_get_preferred_locales = CFFI.load("lime", "lime_system_get_preferred_locales", 0);
+private static var lime_system_get_hint = CFFI.load("lime", "lime_system_get_hint", 1);
+private static var lime_system_get_first_gyroscope_sensor_id = CFFI.load("lime", "lime_system_get_first_gyroscope_sensor_id", 0);
+private static var lime_system_get_first_accelerometer_sensor_id = CFFI.load("lime", "lime_system_get_first_accelerometer_sensor_id", 0);
+private static var lime_bytes_write_file = CFFI.load("lime", "lime_bytes_write_file", 2);
 	private static var lime_system_get_platform_name = CFFI.load("lime", "lime_system_get_platform_name", 0);
 	private static var lime_system_get_platform_version = CFFI.load("lime", "lime_system_get_platform_version", 0);
 	private static var lime_system_get_timer = CFFI.load("lime", "lime_system_get_timer", 0);
@@ -778,7 +835,13 @@ class NativeCFFI
 	private static var lime_system_open_url = CFFI.load("lime", "lime_system_open_url", 2);
 	private static var lime_text_event_manager_register = CFFI.load("lime", "lime_text_event_manager_register", 2);
 	private static var lime_touch_event_manager_register = CFFI.load("lime", "lime_touch_event_manager_register", 2);
+private static var lime_touch_get_devices = CFFI.load("lime", "lime_touch_get_devices", 0);
+private static var lime_touch_get_device_type = CFFI.load("lime", "lime_touch_get_device_type", 1);
+private static var lime_touch_get_device_name = CFFI.load("lime", "lime_touch_get_device_name", 1);
 	private static var lime_window_alert = CFFI.load("lime", "lime_window_alert", 3);
+private static var lime_window_set_vsync_mode = CFFI.load("lime", "lime_window_set_vsync_mode", 2);
+private static var lime_window_set_always_on_top = CFFI.load("lime", "lime_window_set_always_on_top", 2);
+private static var lime_window_get_handle = CFFI.load("lime", "lime_window_get_handle", 1);
 	private static var lime_window_close = CFFI.load("lime", "lime_window_close", 1);
 	private static var lime_window_context_flip = CFFI.load("lime", "lime_window_context_flip", 1);
 	private static var lime_window_context_lock = CFFI.load("lime", "lime_window_context_lock", 1);
@@ -828,6 +891,7 @@ class NativeCFFI
 
 	#if hl
 	@:hlNative("lime", "hl_application_create") private static function lime_application_create():CFFIPointer
+@:hlNative("lime", "hl_application_alert") private static function lime_application_alert(type:lime.ui.MessageBoxType, message:String, title:String, buttons:Array<String>):Int { return 0; }
 	{
 		return null;
 	}
@@ -965,6 +1029,9 @@ class NativeCFFI
 	@:hlNative("lime", "hl_file_watcher_update") private static function lime_file_watcher_update(handle:CFFIPointer):Void {}
 
 	@:hlNative("lime", "hl_font_get_ascender") private static function lime_font_get_ascender(handle:CFFIPointer):Int
+@:hlNative("lime", "hl_font_shutdown_library") private static function lime_font_shutdown_library():Void {}
+@:hlNative("lime", "hl_font_initialize_library") private static function lime_font_initialize_library():Void {}
+@:hlNative("lime", "hl_font_get_glyph_kerning") private static function lime_font_get_glyph_kerning(leftGlyph:Glyph, rightGlyph:Glyph):GlyphKerning { return null; }
 	{
 		return 0;
 	}
@@ -1060,6 +1127,7 @@ class NativeCFFI
 	@:hlNative("lime", "hl_font_set_size") private static function lime_font_set_size(handle:CFFIPointer, size:Int, dpi:Int):Void {}
 
 	@:hlNative("lime", "hl_gamepad_add_mappings") private static function lime_gamepad_add_mappings(mappings:hl.NativeArray<String>):Void {}
+@:hlNative("lime", "hl_gamepad_set_led") private static function lime_gamepad_set_led(red:Int, green:Int, blue:Int):Void {}
 
 	@:hlNative("lime", "hl_gamepad_get_device_guid") private static function lime_gamepad_get_device_guid(id:Int):hl.Bytes
 	{
@@ -1152,6 +1220,8 @@ class NativeCFFI
 	@:hlNative("lime", "hl_image_data_util_unmultiply_alpha") private static function lime_image_data_util_unmultiply_alpha(image:Image):Void {}
 
 	@:hlNative("lime", "hl_joystick_get_device_guid") private static function lime_joystick_get_device_guid(id:Int):hl.Bytes
+@:hlNative("lime", "hl_joystick_set_led") private static function lime_joystick_set_led(red:Int, green:Int, blue:Int):Void {}
+@:hlNative("lime", "hl_joystick_rumble") private static function lime_joystick_rumble(lowFrequencyRumble:Float, highFrequencyRumble:Float, duration:Int):Void {}
 	{
 		return null;
 	}
@@ -1234,6 +1304,7 @@ class NativeCFFI
 		eventObject:RenderEventInfo):Void {}
 
 	@:hlNative("lime", "hl_sensor_event_manager_register") private static function lime_sensor_event_manager_register(callback:Void->Void,
+@:hlNative("lime", "hl_gesture_event_manager_register") private static function lime_gesture_event_manager_register(callback:Dynamic, eventObject:Dynamic):Void {}
 		eventObject:SensorEventInfo):Void {}
 
 	@:hlNative("lime", "hl_system_get_allow_screen_timeout") private static function lime_system_get_allow_screen_timeout():Bool
@@ -1282,6 +1353,13 @@ class NativeCFFI
 	}
 
 	@:hlNative("lime", "hl_system_get_platform_label") private static function lime_system_get_platform_label():hl.Bytes
+@:hlNative("lime", "hl_system_set_hint") private static function lime_system_set_hint(key:String, value:String):Void {}
+@:hlNative("lime", "hl_system_get_theme") private static function lime_system_get_theme():Theme { return null; }
+@:hlNative("lime", "hl_system_get_preferred_locales") private static function lime_system_get_preferred_locales():Array<Locale> { return null; }
+@:hlNative("lime", "hl_system_get_hint") private static function lime_system_get_hint(key:String):String { return ""; }
+@:hlNative("lime", "hl_system_get_first_gyroscope_sensor_id") private static function lime_system_get_first_gyroscope_sensor_id(parent:Application):Void {}
+@:hlNative("lime", "hl_system_get_first_accelerometer_sensor_id") private static function lime_system_get_first_accelerometer_sensor_id(parent:Application):Void {}
+@:hlNative("lime", "hl_bytes_write_file") private static function lime_bytes_write_file(path:String, bytes:Bytes):Void {}
 	{
 		return null;
 	}
@@ -1309,9 +1387,15 @@ class NativeCFFI
 		eventObject:TextEventInfo):Void {}
 
 	@:hlNative("lime", "hl_touch_event_manager_register") private static function lime_touch_event_manager_register(callback:Void->Void,
+@:hlNative("lime", "hl_touch_get_devices") private static function lime_touch_get_devices():Array<Int> { return null; }
+@:hlNative("lime", "hl_touch_get_device_type") private static function lime_touch_get_device_type(id:Int):TouchDeviceType { return null; }
+@:hlNative("lime", "hl_touch_get_device_name") private static function lime_touch_get_device_name(id:Int):Dynamic { return null; }
 		eventObject:TouchEventInfo):Void {}
 
 	@:hlNative("lime", "hl_window_alert") private static function lime_window_alert(handle:CFFIPointer, message:String, title:String):Void {}
+@:hlNative("lime", "hl_window_set_vsync_mode") private static function lime_window_set_vsync_mode(mode:lime.ui.WindowVSyncMode):Bool { return false; }
+@:hlNative("lime", "hl_window_set_always_on_top") private static function lime_window_set_always_on_top(value:Bool):Bool { return false; }
+@:hlNative("lime", "hl_window_get_handle") private static function lime_window_get_handle():Dynamic { return null; }
 
 	@:hlNative("lime", "hl_window_close") private static function lime_window_close(handle:CFFIPointer):Void {}
 
@@ -1567,6 +1651,10 @@ class NativeCFFI
 	@:cffi private static function lime_al_cleanup():Void;
 
 	@:cffi private static function lime_al_delete_buffer(buffer:CFFIPointer):Void;
+@:cffi private static function lime_al_get_sourcedv_soft(source:CFFIPointer, param:Int, count:Int):Array<Float>;
+@:cffi private static function lime_al_delete_filter(buffer:CFFIPointer):Void;
+@:cffi private static function lime_al_delete_effect(buffer:CFFIPointer):Void;
+@:cffi private static function lime_al_delete_auxiliary_effect_slot(slot:CFFIPointer):Void;
 
 	@:cffi private static function lime_al_delete_buffers(n:Int, buffers:Dynamic):Void;
 
@@ -1707,6 +1795,17 @@ class NativeCFFI
 	@:cffi private static function lime_al_speed_of_sound(speed:Float32):Void;
 
 	@:cffi private static function lime_alc_close_device(device:CFFIPointer):Bool;
+@:cffi private static function lime_alc_reopen_device_soft(device:CFFIPointer, newdevicename:String, attributes:Array<Int>):Bool;
+@:cffi private static function lime_alc_is_extension_present(device:CFFIPointer, extname:String):Bool;
+@:cffi private static function lime_alc_get_string_list(device:CFFIPointer, param:Int):Array<Dynamic>;
+@:cffi private static function lime_alc_get_doublev_soft(device:CFFIPointer, param:Int, count:Int):Array<Float>;
+@:cffi private static function lime_alc_event_control_soft(count:Int, events:Array<Int>, enable:Bool):Void;
+@:cffi private static function lime_alc_event_callback_soft(callback:Dynamic):Void;
+@:cffi private static function lime_alc_capture_stop(device:CFFIPointer):Void;
+@:cffi private static function lime_alc_capture_start(device:CFFIPointer):Void;
+@:cffi private static function lime_alc_capture_samples(device:CFFIPointer, buffer:Dynamic, samples:Int):Void;
+@:cffi private static function lime_alc_capture_open_device(devicename:String, frequency:Int, format:Int, buffersize:Int):CFFIPointer;
+@:cffi private static function lime_alc_capture_close_device(device:CFFIPointer):Bool;
 
 	@:cffi private static function lime_alc_create_context(device:CFFIPointer, attrlist:Dynamic):CFFIPointer;
 
@@ -1787,6 +1886,10 @@ class NativeCFFI
 		false));
 	private static var lime_al_cleanup = new cpp.Callable<Void->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_al_cleanup", "v", false));
 	private static var lime_al_delete_buffer = new cpp.Callable<cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_al_delete_buffer", "ov", false));
+private static var lime_al_get_sourcedv_soft = new cpp.Callable<cpp.Object->Int->Int->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_al_get_sourcedv_soft", "oiio", false));
+private static var lime_al_delete_filter = new cpp.Callable<cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_al_delete_filter", "ov", false));
+private static var lime_al_delete_effect = new cpp.Callable<cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_al_delete_effect", "ov", false));
+private static var lime_al_delete_auxiliary_effect_slot = new cpp.Callable<cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_al_delete_auxiliary_effect_slot", "ov", false));
 	private static var lime_al_delete_buffers = new cpp.Callable<Int->cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_al_delete_buffers", "iov",
 		false));
 	private static var lime_al_delete_source = new cpp.Callable<cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_al_delete_source", "ov", false));
@@ -1880,6 +1983,18 @@ class NativeCFFI
 		false));
 	private static var lime_al_speed_of_sound = new cpp.Callable<cpp.Float32->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_al_speed_of_sound", "fv", false));
 	private static var lime_alc_close_device = new cpp.Callable<cpp.Object->Bool>(cpp.Prime._loadPrime("lime", "lime_alc_close_device", "ob", false));
+private static var lime_alc_reopen_device_soft = new cpp.Callable<cpp.Object->String->cpp.Object->Bool>(cpp.Prime._loadPrime("lime", "lime_alc_reopen_device_soft", "osob", false));
+private static var lime_alc_is_extension_present = new cpp.Callable<cpp.Object->String->Bool>(cpp.Prime._loadPrime("lime", "lime_alc_is_extension_present", "osb", false));
+private static var lime_alc_get_string_list = new cpp.Callable<cpp.Object->Int->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_alc_get_string_list", "oio", false));
+private static var lime_alc_get_doublev_soft = new cpp.Callable<cpp.Object->Int->Int->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_alc_get_doublev_soft",
+		"oiio", false));
+private static var lime_alc_event_control_soft = new cpp.Callable<Int->cpp.Object->Bool->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_alc_event_control_soft", "iobv", false));
+private static var lime_alc_event_callback_soft = new cpp.Callable<cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_alc_event_callback_soft", "ov", false));
+private static var lime_alc_capture_stop = new cpp.Callable<cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_alc_capture_stop", "ov", false));
+private static var lime_alc_capture_start = new cpp.Callable<cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_alc_capture_start", "ov", false));
+private static var lime_alc_capture_samples = new cpp.Callable<cpp.Object->cpp.Object->Int->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_alc_capture_samples", "ooiv", false));
+private static var lime_alc_capture_open_device = new cpp.Callable<String->Int->Int->Int->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_alc_capture_open_device", "siiio", false));
+private static var lime_alc_capture_close_device = new cpp.Callable<cpp.Object->Bool>(cpp.Prime._loadPrime("lime", "lime_alc_capture_close_device", "ob", false));
 	private static var lime_alc_create_context = new cpp.Callable<cpp.Object->cpp.Object->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_alc_create_context",
 		"ooo", false));
 	private static var lime_alc_destroy_context = new cpp.Callable<cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_alc_destroy_context", "ov",
@@ -1938,6 +2053,10 @@ class NativeCFFI
 	private static var lime_al_bufferiv = CFFI.load("lime", "lime_al_bufferiv", 3);
 	private static var lime_al_cleanup = CFFI.load("lime", "lime_al_cleanup", 0);
 	private static var lime_al_delete_buffer = CFFI.load("lime", "lime_al_delete_buffer", 1);
+private static var lime_al_get_sourcedv_soft = CFFI.load("lime", "lime_al_get_sourcedv_soft", 3);
+private static var lime_al_delete_filter = CFFI.load("lime", "lime_al_delete_filter", 1);
+private static var lime_al_delete_effect = CFFI.load("lime", "lime_al_delete_effect", 1);
+private static var lime_al_delete_auxiliary_effect_slot = CFFI.load("lime", "lime_al_delete_auxiliary_effect_slot", 1);
 	private static var lime_al_delete_buffers = CFFI.load("lime", "lime_al_delete_buffers", 2);
 	private static var lime_al_delete_source = CFFI.load("lime", "lime_al_delete_source", 1);
 	private static var lime_al_delete_sources = CFFI.load("lime", "lime_al_delete_sources", 2);
@@ -2008,6 +2127,17 @@ class NativeCFFI
 	private static var lime_al_sourceiv = CFFI.load("lime", "lime_al_sourceiv", 3);
 	private static var lime_al_speed_of_sound = CFFI.load("lime", "lime_al_speed_of_sound", 1);
 	private static var lime_alc_close_device = CFFI.load("lime", "lime_alc_close_device", 1);
+private static var lime_alc_reopen_device_soft = CFFI.load("lime", "lime_alc_reopen_device_soft", 3);
+private static var lime_alc_is_extension_present = CFFI.load("lime", "lime_alc_is_extension_present", 2);
+private static var lime_alc_get_string_list = CFFI.load("lime", "lime_alc_get_string_list", 2);
+private static var lime_alc_get_doublev_soft = CFFI.load("lime", "lime_alc_get_doublev_soft", 3);
+private static var lime_alc_event_control_soft = CFFI.load("lime", "lime_alc_event_control_soft", 3);
+private static var lime_alc_event_callback_soft = CFFI.load("lime", "lime_alc_event_callback_soft", 1);
+private static var lime_alc_capture_stop = CFFI.load("lime", "lime_alc_capture_stop", 1);
+private static var lime_alc_capture_start = CFFI.load("lime", "lime_alc_capture_start", 1);
+private static var lime_alc_capture_samples = CFFI.load("lime", "lime_alc_capture_samples", 3);
+private static var lime_alc_capture_open_device = CFFI.load("lime", "lime_alc_capture_open_device", 4);
+private static var lime_alc_capture_close_device = CFFI.load("lime", "lime_alc_capture_close_device", 1);
 	private static var lime_alc_create_context = CFFI.load("lime", "lime_alc_create_context", 2);
 	private static var lime_alc_destroy_context = CFFI.load("lime", "lime_alc_destroy_context", 1);
 	private static var lime_alc_get_contexts_device = CFFI.load("lime", "lime_alc_get_contexts_device", 1);
@@ -2062,6 +2192,10 @@ class NativeCFFI
 	@:hlNative("lime", "hl_al_cleanup") private static function lime_al_cleanup():Void {}
 
 	@:hlNative("lime", "hl_al_delete_buffer") private static function lime_al_delete_buffer(buffer:CFFIPointer):Void {}
+@:hlNative("lime", "hl_al_get_sourcedv_soft") private static function lime_al_get_sourcedv_soft(source:ALSource, param:Int, count:Int = 1):Array<Float> { return null; }
+@:hlNative("lime", "hl_al_delete_filter") private static function lime_al_delete_filter(filter:ALFilter):Void {}
+@:hlNative("lime", "hl_al_delete_effect") private static function lime_al_delete_effect(effect:ALEffect):Void {}
+@:hlNative("lime", "hl_al_delete_auxiliary_effect_slot") private static function lime_al_delete_auxiliary_effect_slot(aux:ALAuxiliaryEffectSlot):Void {}
 
 	@:hlNative("lime", "hl_al_delete_buffers") private static function lime_al_delete_buffers(n:Int, buffers:hl.NativeArray<CFFIPointer>):Void {}
 
@@ -2323,6 +2457,17 @@ class NativeCFFI
 	@:hlNative("lime", "hl_al_speed_of_sound") private static function lime_al_speed_of_sound(speed:hl.F32):Void {}
 
 	@:hlNative("lime", "hl_alc_close_device") private static function lime_alc_close_device(device:CFFIPointer):Bool
+@:hlNative("lime", "hl_alc_reopen_device_soft") private static function lime_alc_reopen_device_soft(device:ALDevice, newDeviceName:String, attributes:Array<Int>):Bool { return false; }
+@:hlNative("lime", "hl_alc_is_extension_present") private static function lime_alc_is_extension_present(device:ALDevice, extname:String):Bool { return false; }
+@:hlNative("lime", "hl_alc_get_string_list") private static function lime_alc_get_string_list(device:ALDevice, param:Int):Array<String> { return null; }
+@:hlNative("lime", "hl_alc_get_doublev_soft") private static function lime_alc_get_doublev_soft(device:ALDevice, param:Int, count:Int = 1):Array<Float> { return null; }
+@:hlNative("lime", "hl_alc_event_control_soft") private static function lime_alc_event_control_soft(events:Array<Int>, enable:Bool):Void {}
+@:hlNative("lime", "hl_alc_event_callback_soft") private static function lime_alc_event_callback_soft(callback:Dynamic):Void {}
+@:hlNative("lime", "hl_alc_capture_stop") private static function lime_alc_capture_stop(device:ALDevice):Void {}
+@:hlNative("lime", "hl_alc_capture_start") private static function lime_alc_capture_start(device:ALDevice):Void {}
+@:hlNative("lime", "hl_alc_capture_samples") private static function lime_alc_capture_samples(device:ALDevice, buffer:Bytes, samples:Int):Void {}
+@:hlNative("lime", "hl_alc_capture_open_device") private static function lime_alc_capture_open_device(deviceName:String, frequency:Int, format:Int, bufferSize:Int):ALDevice { return null; }
+@:hlNative("lime", "hl_alc_capture_close_device") private static function lime_alc_capture_close_device(device:ALDevice):Bool { return false; }
 	{
 		return false;
 	}
@@ -5745,6 +5890,7 @@ class NativeCFFI
 	#if (cpp && !cppia)
 	#if (disable_cffi || haxe_ver < "3.4.0")
 	@:cffi private static function lime_hb_blob_create(data:DataPointer, length:Int, memoryMode:Int):CFFIPointer;
+@:cffi private static function lime_hb_ft_font_changed():Void;
 
 	@:cffi private static function lime_hb_blob_create_sub_blob(parent:CFFIPointer, offset:Int, length:Int):CFFIPointer;
 
@@ -5969,6 +6115,7 @@ class NativeCFFI
 	@:cffi private static function lime_hb_shape(font:CFFIPointer, buffer:CFFIPointer, features:Dynamic):Void;
 	#else
 	private static var lime_hb_blob_create = new cpp.Callable<lime.utils.DataPointer->Int->Int->cpp.Object>(cpp.Prime._loadPrime("lime",
+private static var lime_hb_ft_font_changed = new cpp.Callable<cpp.Object->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_hb_ft_font_changed", "ov", false));
 		"lime_hb_blob_create", "diio", false));
 	private static var lime_hb_blob_create_sub_blob = new cpp.Callable<cpp.Object->Int->Int->cpp.Object>(cpp.Prime._loadPrime("lime",
 		"lime_hb_blob_create_sub_blob", "oiio", false));
@@ -6276,6 +6423,7 @@ class NativeCFFI
 
 	#if hl
 	@:hlNative("lime", "hl_hb_blob_create") private static function lime_hb_blob_create(data:DataPointer, length:Int, memoryMode:Int):CFFIPointer
+@:hlNative("lime", "hl_hb_ft_font_changed") private static function lime_hb_ft_font_changed():Void {}
 	{
 		return null;
 	}

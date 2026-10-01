@@ -494,7 +494,34 @@ namespace lime {
 	}
 
 
-	void SDLWindow::Close () {
+	
+	void* SDLWindow::GetHandle () {
+
+		return sdlWindow;
+
+	}
+
+
+	bool SDLWindow::SetVSyncMode (int mode) {
+
+		#if defined (SDL_VIDEO_DRIVER_OPENGL) || defined (SDL_H)
+		return SDL_GL_SetSwapInterval (mode) == 0;
+		#else
+		return false;
+		#endif
+
+	}
+
+
+	bool SDLWindow::SetAlwaysOnTop (bool alwaysOnTop) {
+
+		SDL_SetWindowAlwaysOnTop (sdlWindow, alwaysOnTop ? SDL_TRUE : SDL_FALSE);
+		return true;
+
+	}
+
+
+void SDLWindow::Close () {
 
 		renderThread.Stop ();
 

@@ -52,6 +52,8 @@ namespace lime {
 			int GetGlyphIndex (const char* character);
 			void* GetGlyphIndices (bool useCFFIValue, const char* characters);
 			void* GetGlyphMetrics (bool useCFFIValue, int index);
+
+			void* GetKerning (int leftIndex, int rightIndex);
 			int GetHeight ();
 			int GetNumGlyphs ();
 			int GetUnderlinePosition ();

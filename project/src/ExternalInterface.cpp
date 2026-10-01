@@ -63,8 +63,217 @@
 
 DEFINE_KIND (k_finalizer);
 
+#define SDL_MAIN_HANDLED
+#include <SDL.h>
+#include <map>
 
 namespace lime {
+
+	// ---- Group A (non-decoder) native functions integrated from upstream lime ----
+	// Gamepad/Joystick device registries live in the SDL backend translation units.
+	extern std::map<int, SDL_GameController*> gameControllers;
+	extern std::map<int, SDL_Joystick*> joysticks;
+
+	// Gesture registration holder (target currently has no GestureEvent class)
+	static ValuePointer* gestureCallback = nullptr;
+	static ValuePointer* gestureEventObject = nullptr;
+
+
+	value lime_system_get_hint (HxString hintKey) {
+
+		std::string key (hxs_utf8 (hintKey, nullptr));
+		if (key.rfind ("SDL_", 0) != 0) key = "SDL_" + key;
+		const char *hint = SDL_GetHint (key.c_str ());
+		if (hint) return alloc_string (hint);
+		else return alloc_null ();
+
+	}
+
+
+	void lime_system_set_hint (HxString hintKey, HxString hintValue) {
+
+		std::string key (hxs_utf8 (hintKey, nullptr));
+		if (key.rfind ("SDL_", 0) != 0) key = "SDL_" + key;
+		SDL_SetHint (key.c_str (), hxs_utf8 (hintValue, nullptr));
+
+	}
+
+
+	int lime_system_get_theme () {
+
+		// Bundled SDL has no SDL_GetSystemTheme; default to UNKNOWN (0).
+		return 0;
+
+	}
+
+
+	value lime_system_get_preferred_locales () {
+
+		SDL_Locale *preferredLocales = SDL_GetPreferredLocales ();
+
+		if (preferredLocales) {
+
+			int count = 0;
+			while (preferredLocales[count].language) count++;
+
+			value values = alloc_array (count);
+
+			for (int i = 0; i < count; i++) {
+
+				value value = alloc_empty_object ();
+				alloc_field (value, val_id ("language"), alloc_string (preferredLocales[i].language));
+				alloc_field (value, val_id ("country"), preferredLocales[i].country ? alloc_string (preferredLocales[i].country) : alloc_null ());
+				val_array_set_i (values, i, value);
+
+			}
+
+			SDL_free (preferredLocales);
+			return values;
+
+		}
+
+		return alloc_null ();
+
+	}
+
+
+	int lime_system_get_first_gyroscope_sensor_id () {
+
+		return -1;
+
+	}
+
+
+	int lime_system_get_first_accelerometer_sensor_id () {
+
+		return -1;
+
+	}
+
+
+	value lime_font_get_glyph_kerning (value fontHandle, int leftIndex, int rightIndex) {
+
+		Font *font = (Font*)val_data (fontHandle);
+		return (value)font->GetKerning (leftIndex, rightIndex);
+
+	}
+
+
+	double lime_window_get_handle (value window) {
+
+		Window *targetWindow = (Window*)val_data (window);
+		return (double)(uintptr_t)targetWindow->GetHandle ();
+
+	}
+
+
+	bool lime_window_set_vsync_mode (value window, int mode) {
+
+		Window *targetWindow = (Window*)val_data (window);
+		return targetWindow->SetVSyncMode (mode);
+
+	}
+
+
+	bool lime_window_set_always_on_top (value window, bool alwaysOnTop) {
+
+		Window *targetWindow = (Window*)val_data (window);
+		return targetWindow->SetAlwaysOnTop (alwaysOnTop);
+
+	}
+
+
+	int lime_application_alert (value application, int type, HxString message, HxString title, value buttons) {
+
+		(void)application; (void)type; (void)buttons;
+		SDL_ShowSimpleMessageBox (SDL_MESSAGEBOX_INFORMATION, hxs_utf8 (title, nullptr), hxs_utf8 (message, nullptr), nullptr);
+		return 0;
+
+	}
+
+
+	value lime_touch_get_devices () {
+
+		int count = SDL_GetNumTouchDevices ();
+		value values = alloc_array (count);
+
+		for (int i = 0; i < count; i++) {
+
+			val_array_set_i (values, i, alloc_int ((int)SDL_GetTouchDevice (i)));
+
+		}
+
+		return values;
+
+	}
+
+
+	value lime_touch_get_device_name (int id) {
+
+		// SDL_GetTouchDeviceName is absent from the bundled SDL headers; return null.
+		return alloc_null ();
+
+	}
+
+
+	int lime_touch_get_device_type (int id) {
+
+		SDL_TouchDeviceType type = SDL_GetTouchDeviceType ((SDL_TouchID)id);
+
+		switch (type) {
+
+			case SDL_TOUCH_DEVICE_DIRECT: return 0;
+			case SDL_TOUCH_DEVICE_INDIRECT_ABSOLUTE: return 1;
+			case SDL_TOUCH_DEVICE_INDIRECT_RELATIVE: return 2;
+			default: return -1;
+
+		}
+
+	}
+
+
+	void lime_gamepad_set_led (int id, int red, int green, int blue) {
+
+		auto it = gameControllers.find (id);
+		if (it == gameControllers.end ()) return;
+		SDL_GameControllerSetLED (it->second, (Uint8)red, (Uint8)green, (Uint8)blue);
+
+	}
+
+
+	void lime_joystick_rumble (int id, double lowFrequencyRumble, double highFrequencyRumble, int duration) {
+
+		auto it = joysticks.find (id);
+		if (it == joysticks.end ()) return;
+
+		if (lowFrequencyRumble < 0.0) lowFrequencyRumble = 0.0;
+		else if (lowFrequencyRumble > 1.0) lowFrequencyRumble = 1.0;
+		if (highFrequencyRumble < 0.0) highFrequencyRumble = 0.0;
+		else if (highFrequencyRumble > 1.0) highFrequencyRumble = 1.0;
+
+		SDL_JoystickRumble (it->second, (Uint16)(lowFrequencyRumble * 0xFFFF), (Uint16)(highFrequencyRumble * 0xFFFF), duration);
+
+	}
+
+
+	void lime_joystick_set_led (int id, int red, int green, int blue) {
+
+		auto it = joysticks.find (id);
+		if (it == joysticks.end ()) return;
+		SDL_JoystickSetLED (it->second, (Uint8)red, (Uint8)green, (Uint8)blue);
+
+	}
+
+
+	void lime_gesture_event_manager_register (value callback, value eventObject) {
+
+		if (gestureCallback) delete gestureCallback;
+		if (gestureEventObject) delete gestureEventObject;
+		gestureCallback = new ValuePointer (callback);
+		gestureEventObject = new ValuePointer (eventObject);
+
+	}
+
 
 
 	void gc_application (value handle) {
@@ -4325,6 +4534,26 @@ namespace lime {
 	DEFINE_PRIME3v (lime_window_warp_mouse);
 	DEFINE_PRIME1 (lime_window_get_opacity);
 	DEFINE_PRIME2v (lime_window_set_opacity);
+	DEFINE_PRIME1 (lime_system_get_hint);
+	DEFINE_PRIME2v (lime_system_set_hint);
+	DEFINE_PRIME0 (lime_system_get_theme);
+	DEFINE_PRIME0 (lime_system_get_preferred_locales);
+	DEFINE_PRIME0 (lime_system_get_first_gyroscope_sensor_id);
+	DEFINE_PRIME0 (lime_system_get_first_accelerometer_sensor_id);
+	DEFINE_PRIME3 (lime_font_get_glyph_kerning);
+	DEFINE_PRIME1 (lime_window_get_handle);
+	DEFINE_PRIME2 (lime_window_set_vsync_mode);
+	DEFINE_PRIME2 (lime_window_set_always_on_top);
+	DEFINE_PRIME5 (lime_application_alert);
+	DEFINE_PRIME0 (lime_touch_get_devices);
+	DEFINE_PRIME1 (lime_touch_get_device_name);
+	DEFINE_PRIME1 (lime_touch_get_device_type);
+	DEFINE_PRIME4v (lime_gamepad_set_led);
+	DEFINE_PRIME4v (lime_joystick_rumble);
+	DEFINE_PRIME4v (lime_joystick_set_led);
+	DEFINE_PRIME2v (lime_gesture_event_manager_register);
+
+
 	DEFINE_PRIME2 (lime_zlib_compress);
 	DEFINE_PRIME2 (lime_zlib_decompress);
 

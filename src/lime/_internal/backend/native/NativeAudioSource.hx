@@ -558,6 +558,11 @@ class NativeAudioSource
 		return value;
 	}
 
+	public function getPlaying():Bool
+	{
+		return playing;
+	}
+
 	public function getPosition():Vector4
 	{
 		if (handle != null)

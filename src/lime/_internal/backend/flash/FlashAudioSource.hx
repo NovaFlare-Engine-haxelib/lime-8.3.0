@@ -128,6 +128,11 @@ class FlashAudioSource
 		return getPitch();
 	}
 
+	public function getPlaying():Bool
+	{
+		return playing;
+	}
+
 	public function getPosition():Vector4
 	{
 		position.x = channel.soundTransform.pan;

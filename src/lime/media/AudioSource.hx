@@ -25,6 +25,8 @@ class AudioSource
 	**/
 	public var onComplete = new Event<Void->Void>();
 	
+	public static var activeSources(default, null):Array<AudioSource> = [];
+
 	/**
 		The `AudioBuffer` associated with this `AudioSource`.
 	**/
@@ -33,7 +35,7 @@ class AudioSource
 	/**
 		The current playback position of the audio, in milliseconds.
 	**/
-	public var currentTime(get, set):Int;
+	public var currentTime(get, set):Float;
 
 	/**
 		The gain (volume) of the audio. A value of `1.0` represents the default volume.
@@ -65,6 +67,11 @@ class AudioSource
 	**/
 	public var position(get, set):Vector4;
 
+	/**
+		Whether the audio source is currently playing.
+	**/
+	public var playing(get, never):Bool;
+
 	@:noCompletion private var __backend:AudioSourceBackend;
 
 	/**
@@ -88,6 +95,8 @@ class AudioSource
 
 		this.loops = loops;
 
+		activeSources.push(this);
+
 		if (buffer != null)
 		{
 			init();
@@ -99,6 +108,7 @@ class AudioSource
 	**/
 	public function dispose():Void
 	{
+		activeSources.remove(this);
 		__backend.dispose();
 	}
 
@@ -132,14 +142,14 @@ class AudioSource
 	}
 
 	// Get & Set Methods
-	@:noCompletion private function get_currentTime():Int
+	@:noCompletion private function get_currentTime():Float
 	{
 		return __backend.getCurrentTime();
 	}
 
-	@:noCompletion private function set_currentTime(value:Int):Int
+	@:noCompletion private function set_currentTime(value:Float):Float
 	{
-		return __backend.setCurrentTime(value);
+		return __backend.setCurrentTime(Std.int(value));
 	}
 
 	@:noCompletion private function get_gain():Float
@@ -190,6 +200,11 @@ class AudioSource
 	@:noCompletion private function set_position(value:Vector4):Vector4
 	{
 		return __backend.setPosition(value);
+	}
+
+	@:noCompletion private function get_playing():Bool
+	{
+		return __backend.getPlaying();
 	}
 }
 

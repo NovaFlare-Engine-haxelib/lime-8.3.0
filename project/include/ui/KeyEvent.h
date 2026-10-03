@@ -26,6 +26,8 @@ namespace lime {
 		KeyEventType type;
 		int windowID;
 
+		double timestamp;
+
 		static ValuePointer* callback;
 		static ValuePointer* eventObject;
 

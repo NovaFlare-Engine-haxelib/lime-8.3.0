@@ -1,5 +1,10 @@
 package lime._internal.format;
 
+import lime.graphics.ImageBuffer;
+import lime.utils.UInt8Array;
+
+import lime._internal.backend.native.NativeCFFI;
+
 import haxe.io.Bytes;
 import lime.graphics.Image;
 import lime.math.Rectangle;
@@ -8,6 +13,7 @@ import lime.math.Rectangle;
 @:fileXml('tags="haxe,release"')
 @:noDebug
 #end
+@:access(lime._internal.backend.native.NativeCFFI)
 class BMP
 {
 	public static function encode(image:Image, type:BMPType = null):Bytes
@@ -196,6 +202,34 @@ class BMP
 		}
 
 		return data;
+	}
+
+	public static function decodeBytes(bytes:Bytes):Image
+	{
+		#if (lime_cffi && !macro)
+		var buffer = NativeCFFI.lime_bmp_decode_bytes(bytes, new ImageBuffer(new UInt8Array(Bytes.alloc(0))));
+
+		if (buffer != null)
+		{
+			return new Image(buffer);
+		}
+		#end
+
+		return null;
+	}
+
+	public static function decodeFile(path:String):Image
+	{
+		#if (lime_cffi && !macro)
+		var buffer = NativeCFFI.lime_bmp_decode_file(path, new ImageBuffer(new UInt8Array(Bytes.alloc(0))));
+
+		if (buffer != null)
+		{
+			return new Image(buffer);
+		}
+		#end
+
+		return null;
 	}
 }
 

@@ -263,6 +263,8 @@ abstract WebGL2RenderContext(HTML5WebGL2RenderContext) from HTML5WebGL2RenderCon
 	{
 		return cast gl;
 	}
+
+	public inline function blendBarrier():Void {}
 }
 #elseif (!lime_doc_gen || lime_opengl || lime_opengles || lime_webgl)
 import haxe.Int64;
@@ -5015,6 +5017,11 @@ abstract WebGL2RenderContext(Dynamic) from Dynamic to Dynamic
 	@:from private static function fromGL(gl:Class<GL>):WebGL2RenderContext
 	{
 		return cast GL.context;
+	}
+
+	public inline function blendBarrier():Void
+	{
+		this.blendBarrier();
 	}
 }
 #end

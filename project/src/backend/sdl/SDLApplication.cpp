@@ -42,6 +42,13 @@
 
 
 namespace lime {
+    static double compatEventTimestamp(Uint32 milliseconds) {
+        Uint64 now=SDL_GetTicks64();
+        Uint64 timestamp=(now&~Uint64(0xffffffff))|milliseconds;
+        if(timestamp>now && timestamp-now>0x7fffffffULL && timestamp>=0x100000000ULL)timestamp-=0x100000000ULL;
+        return (double)timestamp*1000000.0;
+    }
+
 
 
 	AutoGCRoot* Application::callback = 0;
@@ -161,6 +168,7 @@ namespace lime {
 		WindowEvent windowEvent;
 
 		SDL_EventState (SDL_DROPFILE, SDL_ENABLE);
+		SDL_EventState(SDL_DROPTEXT,SDL_ENABLE);SDL_EventState(SDL_DROPBEGIN,SDL_ENABLE);SDL_EventState(SDL_DROPCOMPLETE,SDL_ENABLE);
 		SDLJoystick::Init ();
 
 		#if defined(_WIN32) || defined(HX_MACOS)
@@ -370,6 +378,9 @@ namespace lime {
 				break;
 
 			case SDL_DROPFILE:
+			case SDL_DROPTEXT:
+			case SDL_DROPBEGIN:
+			case SDL_DROPCOMPLETE:
 
 				ProcessDropEvent (event);
 				break;
@@ -549,18 +560,20 @@ namespace lime {
 
 
 	void SDLApplication::ProcessDropEvent (SDL_Event* event) {
-
-		if (DropEvent::callback) {
-
-			dropEvent.type = DROP_FILE;
-			dropEvent.file = (vbyte*)event->drop.file;
-
-			DropEvent::Dispatch (&dropEvent);
-			SDL_free (dropEvent.file);
-
-		}
-
-	}
+        if(DropEvent::callback) {
+            switch(event->type) {
+                case SDL_DROPTEXT:dropEvent.type=DROP_TEXT;break;
+                case SDL_DROPBEGIN:dropEvent.type=DROP_BEGIN;break;
+                case SDL_DROPCOMPLETE:dropEvent.type=DROP_COMPLETE;break;
+                default:dropEvent.type=DROP_FILE;break;
+            }
+            dropEvent.windowID=event->drop.windowID;
+            int x=0,y=0;SDL_GetMouseState(&x,&y);dropEvent.x=x;dropEvent.y=y;
+            dropEvent.file=(event->type==SDL_DROPFILE||event->type==SDL_DROPTEXT)?(vbyte*)event->drop.file:nullptr;
+            DropEvent::Dispatch(&dropEvent);
+        }
+        if(event->type==SDL_DROPFILE||event->type==SDL_DROPTEXT)SDL_free(event->drop.file);
+    }
 
 
 	void SDLApplication::ProcessGamepadEvent (SDL_Event* event) {
@@ -591,7 +604,8 @@ namespace lime {
 
 							gamepadsAxisMap[event->caxis.which][event->caxis.axis] = 0;
 							gamepadEvent.axisValue = 0;
-							GamepadEvent::Dispatch (&gamepadEvent);
+							gamepadEvent.timestamp=compatEventTimestamp(event->common.timestamp);
+					GamepadEvent::Dispatch (&gamepadEvent);
 
 						}
 
@@ -602,6 +616,7 @@ namespace lime {
 					gamepadsAxisMap[event->caxis.which][event->caxis.axis] = event->caxis.value;
 					gamepadEvent.axisValue = event->caxis.value / (event->caxis.value > 0 ? 32767.0 : 32768.0);
 
+					gamepadEvent.timestamp=compatEventTimestamp(event->common.timestamp);
 					GamepadEvent::Dispatch (&gamepadEvent);
 					break;
 
@@ -611,6 +626,7 @@ namespace lime {
 					gamepadEvent.button = event->cbutton.button;
 					gamepadEvent.id = event->cbutton.which;
 
+					gamepadEvent.timestamp=compatEventTimestamp(event->common.timestamp);
 					GamepadEvent::Dispatch (&gamepadEvent);
 					break;
 
@@ -620,6 +636,7 @@ namespace lime {
 					gamepadEvent.button = event->cbutton.button;
 					gamepadEvent.id = event->cbutton.which;
 
+					gamepadEvent.timestamp=compatEventTimestamp(event->common.timestamp);
 					GamepadEvent::Dispatch (&gamepadEvent);
 					break;
 
@@ -630,7 +647,8 @@ namespace lime {
 						gamepadEvent.type = GAMEPAD_CONNECT;
 						gamepadEvent.id = SDLGamepad::GetInstanceID (event->cdevice.which);
 
-						GamepadEvent::Dispatch (&gamepadEvent);
+						gamepadEvent.timestamp=compatEventTimestamp(event->common.timestamp);
+					GamepadEvent::Dispatch (&gamepadEvent);
 
 					}
 
@@ -641,6 +659,7 @@ namespace lime {
 					gamepadEvent.type = GAMEPAD_DISCONNECT;
 					gamepadEvent.id = event->cdevice.which;
 
+					gamepadEvent.timestamp=compatEventTimestamp(event->common.timestamp);
 					GamepadEvent::Dispatch (&gamepadEvent);
 					SDLGamepad::Disconnect (event->cdevice.which);
 					break;
@@ -778,6 +797,7 @@ namespace lime {
 
 			}
 
+			keyEvent.timestamp=compatEventTimestamp(event->key.timestamp);
 			KeyEvent::Dispatch (&keyEvent);
 
 		}

@@ -736,7 +736,10 @@ class IOSPlatform extends PlatformTarget
 						var background = project.window.background != null ? project.window.background & 0xFFFFFF : 0x000000;
 						var image = new Image(null, 0, 0, size.w, size.h, (0xFF << 24) | background);
 						var bytes = image.encode(PNG);
-
+						if (bytes == null)
+						{
+							throw "Unable to encode generated iOS launch image: " + imagePath;
+						}
 						File.saveBytes(imagePath, bytes);
 						#end
 					}

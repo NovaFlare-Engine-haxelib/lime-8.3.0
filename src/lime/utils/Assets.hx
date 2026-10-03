@@ -604,6 +604,9 @@ class Assets
 		cache.clear();
 		onChange.dispatch();
 	}
+
+	public static function getAudioBufferStream(id:String, #if (!lime_doc_gen || lime_vorbis) useCache:Bool=true #end):AudioBuffer return getAudioBuffer(id #if (!lime_doc_gen || lime_vorbis) ,useCache #end);
+	public static function loadAudioBufferStream(id:String, #if (!lime_doc_gen || lime_vorbis) useCache:Bool=true #end):Future<AudioBuffer> return loadAudioBuffer(id #if (!lime_doc_gen || lime_vorbis) ,useCache #end);
 }
 
 #if !lime_debug

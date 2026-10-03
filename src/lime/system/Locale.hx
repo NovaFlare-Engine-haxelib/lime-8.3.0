@@ -12,10 +12,10 @@ abstract Locale(String) from String to String
 	public static var systemLocale(get, never):Locale;
 	private static var __systemLocale:Locale;
 
-	public var language(get, never):String;
+	public var language(get, set):String;
 	public var region(get, never):String;
 
-	public function new(value:String)
+	public function new(value:String=null)
 	{
 		this = value;
 	}
@@ -169,4 +169,11 @@ abstract Locale(String) from String to String
 
 		return __systemLocale;
 	}
+
+
+    public var country(get,set):String;
+    private function get_country():String return get_region();
+    private inline function set_country(value:String):String {var language=get_language();this=(language==null?"":language)+(value==null||value==""?"":"-"+value);return value;}
+    private inline function set_language(value:String):String {var country=get_region();this=(value==null?"":value)+(country==null||country==""?"":"-"+country);return value;}
+
 }

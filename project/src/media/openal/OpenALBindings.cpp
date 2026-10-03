@@ -16,8 +16,10 @@
 #include <system/CFFIPointer.h>
 #include <system/Mutex.h>
 #include <utils/ArrayBufferView.h>
+#include <utils/Bytes.h>
 #include <list>
 #include <map>
+#include <vector>
 
 
 namespace lime {
@@ -3129,6 +3131,159 @@ namespace lime {
 	}
 
 
+	value lime_al_get_sourcedv_soft (value source, int param, int count) {
+
+		value result = alloc_array (count > 0 ? count : 0);
+		if (count <= 0) return result;
+
+		std::vector<ALdouble> values (count, 0.0);
+		auto getSourceDoublev = (void (AL_APIENTRY*) (ALuint, ALenum, ALdouble*))alGetProcAddress ("alGetSourcedvSOFT");
+		if (getSourceDoublev) getSourceDoublev ((ALuint)(uintptr_t)val_data (source), param, values.data ());
+
+		for (int i = 0; i < count; i++) val_array_set_i (result, i, alloc_float ((double)values[i]));
+		return result;
+
+	}
+
+
+	bool lime_alc_reopen_device_soft (value device, HxString newDeviceName, value attributes) {
+
+		ALCdevice* alcDevice = (ALCdevice*)val_data (device);
+		int size = val_is_null (attributes) ? 0 : val_array_size (attributes);
+		std::vector<ALCint> values (size + 1, 0);
+		for (int i = 0; i < size; i++) values[i] = (ALCint)val_int (val_array_i (attributes, i));
+
+		auto reopenDevice = (ALCboolean (ALC_APIENTRY*) (ALCdevice*, const ALCchar*, const ALCint*))alcGetProcAddress (alcDevice, "alcReopenDeviceSOFT");
+		if (reopenDevice) return reopenDevice (alcDevice, newDeviceName.__s, values.data ()) == ALC_TRUE;
+
+		auto resetDevice = (ALCboolean (ALC_APIENTRY*) (ALCdevice*, const ALCint*))alcGetProcAddress (alcDevice, "alcResetDeviceSOFT");
+		return resetDevice && resetDevice (alcDevice, values.data ()) == ALC_TRUE;
+
+	}
+
+
+	bool lime_alc_is_extension_present (value device, HxString extensionName) {
+
+		ALCdevice* alcDevice = val_is_null (device) ? NULL : (ALCdevice*)val_data (device);
+		return alcIsExtensionPresent (alcDevice, hxs_utf8 (extensionName, nullptr)) == ALC_TRUE;
+
+	}
+
+
+	value lime_alc_get_string_list (value device, int param) {
+
+		value result = alloc_array (0);
+		#ifdef LIME_OPENALSOFT
+			ALCdevice* alcDevice = val_is_null (device) ? NULL : (ALCdevice*)val_data (device);
+			if (param == ALC_HRTF_SPECIFIER_SOFT && alcIsExtensionPresent (alcDevice, "ALC_SOFT_HRTF")) {
+				auto getStringi = (const ALCchar* (ALC_APIENTRY*) (ALCdevice*, ALCenum, ALCsizei))alcGetProcAddress (alcDevice, "alcGetStringiSOFT");
+				if (getStringi) {
+					ALCint count = 0;
+					alcGetIntegerv (alcDevice, ALC_NUM_HRTF_SPECIFIERS_SOFT, 1, &count);
+					result = alloc_array (count > 0 ? count : 0);
+					for (ALCint i = 0; i < count; i++) {
+						const ALCchar* item = getStringi (alcDevice, param, i);
+						if (item) val_array_set_i (result, i, alloc_string (item));
+					}
+				}
+			}
+		#endif
+		return result;
+
+	}
+
+
+	value lime_alc_get_doublev_soft (value device, int param, int count) {
+
+		int length = count > 0 ? count : 0;
+		value result = alloc_array (length);
+		if (length == 0) return result;
+
+		std::vector<ALdouble> values (length, 0.0);
+		ALCdevice* alcDevice = val_is_null (device) ? NULL : (ALCdevice*)val_data (device);
+		auto getDoublev = (void (ALC_APIENTRY*) (ALCdevice*, ALCenum, ALCsizei, ALdouble*))alcGetProcAddress (alcDevice, "alcGetDoublevSOFT");
+		if (getDoublev) {
+			getDoublev (alcDevice, param, length, values.data ());
+		} else {
+			auto getInteger64v = (void (ALC_APIENTRY*) (ALCdevice*, ALCenum, ALCsizei, int64_t*))alcGetProcAddress (alcDevice, "alcGetInteger64vSOFT");
+			if (getInteger64v) {
+				std::vector<int64_t> integerValues (length, 0);
+				getInteger64v (alcDevice, param, length, integerValues.data ());
+				for (int i = 0; i < length; i++) values[i] = (ALdouble)integerValues[i];
+			}
+		}
+
+		for (int i = 0; i < length; i++) val_array_set_i (result, i, alloc_float ((double)values[i]));
+		return result;
+
+	}
+
+
+	void lime_alc_event_control_soft (int count, value events, bool enable) {
+
+		using EventControl = ALCboolean (ALC_APIENTRY*) (ALCsizei, const ALCenum*, ALCboolean);
+		auto eventControl = (EventControl)alcGetProcAddress (NULL, "alcEventControlSOFT");
+		if (!eventControl) return;
+
+		int arraySize = val_is_null (events) ? 0 : val_array_size (events);
+		int length = count > 0 && count < arraySize ? count : arraySize;
+		std::vector<ALCenum> eventValues (length);
+		for (int i = 0; i < length; i++) eventValues[i] = (ALCenum)val_int (val_array_i (events, i));
+		eventControl (length, eventValues.data (), enable ? ALC_TRUE : ALC_FALSE);
+
+	}
+
+
+	void lime_alc_event_callback_soft (value callback) {
+
+		// Clear a registered OpenAL Soft event callback when passed null. Haxe
+		// callbacks require a managed trampoline and are intentionally not retained.
+		if (val_is_null (callback)) {
+			using EventCallback = void (ALC_APIENTRY*) (void*, void*);
+			auto setCallback = (void (ALC_APIENTRY*) (EventCallback, void*))alcGetProcAddress (NULL, "alcEventCallbackSOFT");
+			if (setCallback) setCallback (NULL, NULL);
+		}
+
+	}
+
+
+	void lime_alc_capture_stop (value device) {
+		alcCaptureStop ((ALCdevice*)val_data (device));
+	}
+
+
+	void lime_alc_capture_start (value device) {
+		alcCaptureStart ((ALCdevice*)val_data (device));
+	}
+
+
+	void lime_alc_capture_samples (value device, value buffer, int samples) {
+		Bytes bytes (buffer);
+		if (bytes.b && bytes.length > 0 && samples > 0) {
+			alcCaptureSamples ((ALCdevice*)val_data (device), bytes.b, samples);
+		}
+	}
+
+
+	value lime_alc_capture_open_device (HxString deviceName, int frequency, int format, int bufferSize) {
+		ALCdevice* alcDevice = alcCaptureOpenDevice (deviceName.__s, (ALCuint)frequency, (ALCenum)format, (ALCsizei)bufferSize);
+		value result = CFFIPointer (alcDevice, gc_alc_object);
+		al_gc_mutex.Lock ();
+		alcObjects[alcDevice] = result;
+		al_gc_mutex.Unlock ();
+		return result;
+	}
+
+
+	bool lime_alc_capture_close_device (value device) {
+		ALCdevice* alcDevice = (ALCdevice*)val_data (device);
+		al_gc_mutex.Lock ();
+		alcObjects.erase (alcDevice);
+		al_gc_mutex.Unlock ();
+		return alcCaptureCloseDevice (alcDevice) == ALC_TRUE;
+	}
+
+
 	HL_PRIM bool HL_NAME(hl_alc_close_device) (HL_CFFIPointer* device) {
 
 		al_gc_mutex.Lock ();
@@ -3581,6 +3736,7 @@ namespace lime {
 	DEFINE_PRIME3 (lime_al_get_sourcefv);
 	DEFINE_PRIME2 (lime_al_get_sourcei);
 	DEFINE_PRIME3 (lime_al_get_sourceiv);
+	DEFINE_PRIME3 (lime_al_get_sourcedv_soft);
 	DEFINE_PRIME1 (lime_al_get_string);
 	DEFINE_PRIME1 (lime_al_is_aux);
 	DEFINE_PRIME1 (lime_al_is_buffer);
@@ -3616,14 +3772,25 @@ namespace lime {
 	DEFINE_PRIME1v (lime_al_speed_of_sound);
 	DEFINE_PRIME2 (lime_alc_create_context);
 	DEFINE_PRIME1 (lime_alc_close_device);
+	DEFINE_PRIME1 (lime_alc_capture_close_device);
+	DEFINE_PRIME4 (lime_alc_capture_open_device);
+	DEFINE_PRIME3v (lime_alc_capture_samples);
+	DEFINE_PRIME1v (lime_alc_capture_start);
+	DEFINE_PRIME1v (lime_alc_capture_stop);
 	DEFINE_PRIME1v (lime_alc_destroy_context);
+	DEFINE_PRIME3v (lime_alc_event_control_soft);
+	DEFINE_PRIME1v (lime_alc_event_callback_soft);
 	DEFINE_PRIME1 (lime_alc_get_contexts_device);
+	DEFINE_PRIME3 (lime_alc_get_doublev_soft);
 	DEFINE_PRIME0 (lime_alc_get_current_context);
 	DEFINE_PRIME1 (lime_alc_get_error);
+	DEFINE_PRIME2 (lime_alc_get_string_list);
 	DEFINE_PRIME3 (lime_alc_get_integerv);
 	DEFINE_PRIME2 (lime_alc_get_string);
+	DEFINE_PRIME2 (lime_alc_is_extension_present);
 	DEFINE_PRIME1 (lime_alc_make_context_current);
 	DEFINE_PRIME1 (lime_alc_open_device);
+	DEFINE_PRIME3 (lime_alc_reopen_device_soft);
 	DEFINE_PRIME1v (lime_alc_pause_device);
 	DEFINE_PRIME1v (lime_alc_process_context);
 	DEFINE_PRIME1v (lime_alc_resume_device);

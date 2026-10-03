@@ -1,5 +1,8 @@
 package lime.app;
 
+import haxe.Int64;
+import lime.ui.MessageBoxType;
+
 import lime.graphics.RenderContext;
 import lime.system.System;
 import lime.system.Orientation;
@@ -489,13 +492,19 @@ class Application extends Module
 				window.onRenderContextRestored.add(onRenderContextRestored);
 				window.onDeactivate.add(onWindowDeactivate);
 				window.onDropFile.add(onWindowDropFile);
+                window.onDropText.add(onWindowDropText);
+                window.onDropBegin.add(onWindowDropBegin);
+                window.onDropComplete.add(onWindowDropComplete);
+                window.onDropPosition.add(onWindowDropPosition);
 				window.onEnter.add(onWindowEnter);
 				window.onExpose.add(onWindowExpose);
 				window.onFocusIn.add(onWindowFocusIn);
 				window.onFocusOut.add(onWindowFocusOut);
 				window.onFullscreen.add(onWindowFullscreen);
 				window.onKeyDown.add(onKeyDown);
+                window.onKeyDownPrecise.add(onKeyDownPrecise);
 				window.onKeyUp.add(onKeyUp);
+                window.onKeyUpPrecise.add(onKeyUpPrecise);
 				window.onLeave.add(onWindowLeave);
 				window.onMinimize.add(onWindowMinimize);
 				window.onMouseDown.add(onMouseDown);
@@ -585,8 +594,11 @@ class Application extends Module
 		onGamepadConnect(gamepad);
 
 		gamepad.onAxisMove.add(onGamepadAxisMove.bind(gamepad));
+                gamepad.onAxisMovePrecise.add(onGamepadAxisMovePrecise.bind(gamepad));
 		gamepad.onButtonDown.add(onGamepadButtonDown.bind(gamepad));
+                gamepad.onButtonDownPrecise.add(onGamepadButtonDownPrecise.bind(gamepad));
 		gamepad.onButtonUp.add(onGamepadButtonUp.bind(gamepad));
+                gamepad.onButtonUpPrecise.add(onGamepadButtonUpPrecise.bind(gamepad));
 		gamepad.onDisconnect.add(onGamepadDisconnect.bind(gamepad));
 	}
 
@@ -664,6 +676,36 @@ class Application extends Module
 	{
 		return __backend.getDeviceOrientation();
 	}
+
+
+    public function alert(type:MessageBoxType=INFORMATION,message:String=null,title:String=null,buttons:Array<String>=null):Int {
+        #if (lime_cffi && cpp && !macro && !disable_cffi)
+        return @:privateAccess lime._internal.backend.native.NativeCFFI.lime_application_alert(__backend.handle,type,message,title,buttons);
+        #else
+        return -1;
+        #end
+    }
+
+
+	public function onGamepadAxisMovePrecise(gamepad:Gamepad, axis:GamepadAxis, value:Float, timestamp:Int64):Void {}
+
+	public function onGamepadButtonDownPrecise(gamepad:Gamepad, button:GamepadButton, timestamp:Int64):Void {}
+
+	public function onGamepadButtonUpPrecise(gamepad:Gamepad, button:GamepadButton, timestamp:Int64):Void {}
+
+	public function onKeyDownPrecise(keyCode:KeyCode, modifier:KeyModifier, timestamp:Int64):Void {}
+
+	public function onKeyUpPrecise(keyCode:KeyCode, modifier:KeyModifier, timestamp:Int64):Void {}
+
+	public function onWindowDropText(data:String, source:String, x:Float, y:Float):Void {}
+
+	public function onWindowDropBegin():Void {}
+
+	public function onWindowDropComplete(x:Float, y:Float):Void {}
+
+	public function onWindowDropPosition(x:Float, y:Float):Void {}
+
+	public var onThemeChange = new lime.app.Event<Void->Void>();
 }
 
 #if air

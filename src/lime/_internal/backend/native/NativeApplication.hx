@@ -216,13 +216,17 @@ class NativeApplication
 		Clipboard.__update();
 	}
 
-	private function handleDropEvent():Void
-	{
-		for (window in parent.windows)
-		{
-			window.onDropFile.dispatch(CFFI.stringValue(dropEventInfo.file));
-		}
-	}
+    private function handleDropEvent():Void {
+        var target=parent.__windowByID.get(dropEventInfo.windowID);
+        var windows=target==null?parent.windows:[target];
+        for(window in windows) switch(dropEventInfo.type) {
+            case DROP_FILE:window.onDropFile.dispatch(CFFI.stringValue(dropEventInfo.file),null,dropEventInfo.x,dropEventInfo.y);
+            case DROP_TEXT:window.onDropText.dispatch(CFFI.stringValue(dropEventInfo.file),null,dropEventInfo.x,dropEventInfo.y);
+            case DROP_BEGIN:window.onDropBegin.dispatch();
+            case DROP_COMPLETE:window.onDropComplete.dispatch(dropEventInfo.x,dropEventInfo.y);
+        }
+    }
+
 
 	private function handleGamepadEvent():Void
 	{
@@ -230,15 +234,15 @@ class NativeApplication
 		{
 			case AXIS_MOVE:
 				var gamepad = Gamepad.devices.get(gamepadEventInfo.id);
-				if (gamepad != null) gamepad.onAxisMove.dispatch(gamepadEventInfo.axis, gamepadEventInfo.axisValue);
+				if (gamepad != null) { gamepad.onAxisMove.dispatch(gamepadEventInfo.axis, gamepadEventInfo.axisValue); gamepad.onAxisMovePrecise.dispatch(gamepadEventInfo.axis,gamepadEventInfo.axisValue,haxe.Int64.fromFloat(gamepadEventInfo.timestamp)); }
 
 			case BUTTON_DOWN:
 				var gamepad = Gamepad.devices.get(gamepadEventInfo.id);
-				if (gamepad != null) gamepad.onButtonDown.dispatch(gamepadEventInfo.button);
+				if (gamepad != null) { gamepad.onButtonDown.dispatch(gamepadEventInfo.button); gamepad.onButtonDownPrecise.dispatch(gamepadEventInfo.button,haxe.Int64.fromFloat(gamepadEventInfo.timestamp)); }
 
 			case BUTTON_UP:
 				var gamepad = Gamepad.devices.get(gamepadEventInfo.id);
-				if (gamepad != null) gamepad.onButtonUp.dispatch(gamepadEventInfo.button);
+				if (gamepad != null) { gamepad.onButtonUp.dispatch(gamepadEventInfo.button); gamepad.onButtonUpPrecise.dispatch(gamepadEventInfo.button,haxe.Int64.fromFloat(gamepadEventInfo.timestamp)); }
 
 			case CONNECT:
 				Gamepad.__connect(gamepadEventInfo.id);
@@ -291,9 +295,11 @@ class NativeApplication
 			{
 				case KEY_DOWN:
 					window.onKeyDown.dispatch(keyCode, modifier);
+                    window.onKeyDownPrecise.dispatch(keyCode,modifier,haxe.Int64.fromFloat(keyEventInfo.timestamp));
 
 				case KEY_UP:
 					window.onKeyUp.dispatch(keyCode, modifier);
+                    window.onKeyUpPrecise.dispatch(keyCode,modifier,haxe.Int64.fromFloat(keyEventInfo.timestamp));
 			}
 
 			#if (windows || linux)
@@ -745,11 +751,18 @@ class NativeApplication
 	{
 		return new DropEventInfo(type, file);
 	}
+
+	public var windowID:Int=0;
+	public var x:Float=0;
+	public var y:Float=0;
 }
 
 #if (haxe_ver >= 4.0) private enum #else @:enum private #end abstract DropEventType(Int)
 {
 	var DROP_FILE = 0;
+	var DROP_TEXT = 1;
+	var DROP_BEGIN = 2;
+	var DROP_COMPLETE = 3;
 }
 
 @:keep /*private*/ class GamepadEventInfo
@@ -773,6 +786,8 @@ class NativeApplication
 	{
 		return new GamepadEventInfo(type, id, button, axis, axisValue);
 	}
+
+	public var timestamp:Float = 0;
 }
 
 #if (haxe_ver >= 4.0) private enum #else @:enum private #end abstract GamepadEventType(Int)
@@ -838,6 +853,8 @@ class NativeApplication
 	{
 		return new KeyEventInfo(type, windowID, keyCode, modifier);
 	}
+
+	public var timestamp:Float = 0;
 }
 
 #if (haxe_ver >= 4.0) private enum #else @:enum private #end abstract KeyEventType(Int)

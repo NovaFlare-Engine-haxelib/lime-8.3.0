@@ -134,4 +134,11 @@ abstract Bytes(HaxeBytes) from HaxeBytes to HaxeBytes
 		return NativeCFFI.lime_bytes_from_data_pointer(data, length, bytes);
 	}
 	#end
+
+	public static function toFile(path:String, bytes:Bytes):Void
+	{
+		#if (sys && lime_cffi && !macro)
+		NativeCFFI.lime_bytes_write_file(path, bytes);
+		#end
+	}
 }

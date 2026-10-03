@@ -1,15 +1,15 @@
 {
-	"name": "lime",
-	"url": "https://github.com/openfl/lime",
-	"license": "MIT",
-	"tags": [],
-	"description": "A foundational Haxe framework for cross-platform development",
-	"version": "8.3.0",
-	"releasenote": "Orientation events, gamepad rumble, display safe area, HashLink update",
-	"contributors": [
-		"singmajesty",
-		"bowlerhat",
-		"Dimensionscape"
-	],
-	"classPath": "src"
+  "name": "lime",
+  "url": "https://github.com/NovaFlare-Engine-haxelib/lime-8.3.0",
+  "license": "MIT",
+  "tags": [],
+  "description": "A foundational Haxe framework for cross-platform development",
+  "version": "8.3.0",
+  "releasenote": "NovaFlare NF/CNE/Origin compatibility; retains the NF SDL2 backend.",
+  "contributors": [
+    "singmajesty",
+    "bowlerhat",
+    "Dimensionscape"
+  ],
+  "classPath": "src"
 }

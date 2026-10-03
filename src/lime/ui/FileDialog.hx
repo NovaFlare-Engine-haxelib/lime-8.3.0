@@ -49,6 +49,7 @@ import js.html.Blob;
 #end
 @:access(lime._internal.backend.native.NativeCFFI)
 @:access(lime.graphics.Image)
+@:access(lime.ui.Window)
 class FileDialog
 {
 	/**
@@ -386,5 +387,159 @@ class FileDialog
 		onCancel.dispatch();
 		return false;
 		#end
+	}
+
+	public static function openDirectory(window:Window = null, title:String = null, callback:Array<String>->Void = null, defaultPath:String = null, allowMultiple:Bool = false):Void
+	{
+		#if (lime_cffi && !macro)
+		if (defaultPath == null)
+		{
+			defaultPath = Sys.getCwd();
+		}
+
+		#if hl
+		var dialogCallback = function(list:hl.NativeArray<hl.Bytes>):Void
+		{
+			if (callback != null)
+			{
+				callback([for (i in 0...list.length) CFFI.stringValue(list[i])]);
+			}
+		}
+		#else
+		var dialogCallback = function(list:Array<String>):Void
+		{
+			if (callback != null)
+			{
+				callback(list);
+			}
+		}
+		#end
+
+		NativeCFFI.lime_file_dialog_open_directory((window==null?null:window.__backend.handle), title, dialogCallback, defaultPath, allowMultiple);
+		#end
+	}
+
+	public static function openFile(window:Window = null, title:String = null, callback:Array<String>->FileDialogFilter->Void = null, filters:Array<FileDialogFilter> = null,
+			defaultPath:String = null, ?allowMultiple:Bool = false):Void
+	{
+		#if (lime_cffi && !macro)
+		if (defaultPath == null)
+		{
+			defaultPath = Sys.getCwd();
+		}
+
+		var count = filters != null ? filters.length : 0;
+
+		#if hl
+		var names = new hl.NativeArray<String>(count);
+		var patterns = new hl.NativeArray<String>(count);
+
+		for (i in 0...count)
+		{
+			names[i] = filters[i].name;
+			patterns[i] = filters[i].pattern;
+		}
+
+		var dialogCallback = function(list:hl.NativeArray<hl.Bytes>, filterIndex:Int):Void
+		{
+			if (callback != null)
+			{
+				callback([for (i in 0...list.length) CFFI.stringValue(list[i])], filters != null && filterIndex>=0 && filterIndex<filters.length ? filters[filterIndex] : null);
+			}
+		}
+		#else
+		var names = filters != null ? filters.map(f -> f.name) : [];
+		var patterns = filters != null ? filters.map(f -> f.pattern) : [];
+
+		var dialogCallback = function(filelist:Array<String>, filterIndex:Int):Void
+		{
+			if (callback != null)
+			{
+				callback(filelist, filters != null && filterIndex>=0 && filterIndex<filters.length ? filters[filterIndex] : null);
+			}
+		}
+		#end
+
+		NativeCFFI.lime_file_dialog_open_file((window==null?null:window.__backend.handle), title, dialogCallback, names, patterns, count, defaultPath, allowMultiple);
+		#end
+	}
+
+	public static function saveFile(window:Window = null, title:String = null, callback:String->FileDialogFilter->Void = null, filters:Array<FileDialogFilter> = null,
+			defaultPath:String = null):Void
+	{
+		#if (lime_cffi && !macro)
+		if (defaultPath == null)
+		{
+			defaultPath = Sys.getCwd();
+		}
+
+		var count = filters != null ? filters.length : 0;
+
+		#if hl
+		var names = new hl.NativeArray<String>(count);
+		var patterns = new hl.NativeArray<String>(count);
+
+		for (i in 0...count)
+		{
+			names[i] = filters[i].name;
+			patterns[i] = filters[i].pattern;
+		}
+
+		var dialogCallback = function(filename:hl.Bytes, filterIndex:Int):Void
+		{
+			if (callback != null)
+			{
+				var filter = filters != null && filterIndex >= 0 ? filters[filterIndex] : null;
+
+				callback(__applySaveFilterExtension(filename != null ? CFFI.stringValue(filename) : null, filter), filter);
+			}
+		}
+		#else
+		var names = filters != null ? filters.map(f -> f.name) : [];
+		var patterns = filters != null ? filters.map(f -> f.pattern) : [];
+
+		var dialogCallback = function(filename:String, filterIndex:Int):Void
+		{
+			if (callback != null)
+			{
+				var filter = filters != null && filterIndex >= 0 ? filters[filterIndex] : null;
+
+				callback(__applySaveFilterExtension(filename, filter), filter);
+			}
+		}
+		#end
+
+		NativeCFFI.lime_file_dialog_save_file((window==null?null:window.__backend.handle), title, dialogCallback, names, patterns, count, defaultPath);
+		#end
+	}
+
+	@:noCompletion
+	private static function __applySaveFilterExtension(path:String, filter:FileDialogFilter):String
+	{
+		if (path == null)
+		{
+			return null;
+		}
+
+		if (!Path.isAbsolute(path)
+			|| filter == null
+			|| (filter.pattern == null || filter.pattern.length == 0)
+			|| (filter.pattern != null && filter.pattern == '*'))
+		{
+			return path;
+		}
+
+		var extension:String = Path.extension(path);
+		var patterns:Array<String> = filter.pattern.split(';');
+
+		var extensionLower:String = extension.toLowerCase();
+		var patternsLower:Array<String> = patterns.map(f -> f.toLowerCase());
+
+		if (patterns.length == 1 || extension.length == 0 || !patternsLower.contains(extensionLower))
+		{
+			path = Path.withExtension(path, patterns[0]);
+		}
+
+		return path;
 	}
 }

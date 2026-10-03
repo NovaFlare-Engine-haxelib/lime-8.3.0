@@ -206,6 +206,146 @@ class AudioSource
 	{
 		return __backend.getPlaying();
 	}
+
+
+    private function __addCompatEffect(index:Int):Void {
+        #if !(flash || (js && html5))
+        __backend.addEffect(index);
+        #end
+    }
+    private function __updateCompatEffect(index:Int):Void {
+        #if !(flash || (js && html5))
+        __backend.updateEffect(index);
+        #end
+    }
+    private function __removeCompatEffect(index:Int):Void {
+        #if !(flash || (js && html5))
+        __backend.removeEffect(index);
+        #end
+    }
+    private var __effects:Array<AudioEffect> = [];
+    public var latency(get,never):Float;
+    public var loopTime:Float = 0;
+    public var pan(get,set):Float;
+    public var peaks(get,never):Array<Float>;
+    private function get_latency():Float {
+        #if (flash || (js && html5))
+        return 0;
+        #else
+        return __backend.getLatency();
+        #end
+    }
+    private function get_pan():Float return position.x;
+    private function set_pan(value:Float):Float {position=new Vector4(value,0,0);return value;}
+    private function get_peaks():Array<Float> return [for(_ in 0...(buffer==null?0:buffer.channels)) 0.0];
+    public function load():Void {if(buffer!=null) {buffer.load();init();}}
+    public function unload():Void {stop();__backend.dispose();}
+    public function prepare(minTime:Float=0):Void {if(buffer!=null)buffer.load();}
+    public static function pauseSources(sources:Array<AudioSource>):Void {for(source in sources)if(source!=null)source.pause();}
+    public static function playSources(sources:Array<AudioSource>):Void {for(source in sources)if(source!=null)source.play();}
+    public static function stopSources(sources:Array<AudioSource>):Void {for(source in sources)if(source!=null)source.stop();}
+
+    public function getFloatTimeDomainData(array:lime.utils.Float32Array, size:Int, channel:Int=-1, offset:Int=0):Int {
+        if(array==null||buffer==null||buffer.data==null||size<=0)return 0;
+        var bytesPerSample=Std.int(buffer.bitsPerSample/8);
+        if(bytesPerSample!=1&&bytesPerSample!=2)return 0;
+        var step=channel<0?1:buffer.channels;
+        var start=(Std.int(currentTime*buffer.sampleRate/1000)+offset)*buffer.channels+(channel<0?0:channel);
+        var count=0;
+        while(count<size && count<array.length && start>=0 && (start+count*step+1)*bytesPerSample<=buffer.data.length) {
+            var index=(start+count*step)*bytesPerSample;
+            var sample=bytesPerSample==1?(buffer.data[index]-128)*256:(buffer.data[index]|(buffer.data[index+1]<<8));
+            if(sample>=32768)sample-=65536;
+            array[count++]=sample/32768.0;
+        }
+        return count;
+    }
+
+    public function getByteTimeDomainData(array:lime.utils.UInt8Array, size:Int, channel:Int=-1, offset:Int=0):Int {
+        if(array==null||size<=0)return 0;
+        var samples=new lime.utils.Float32Array(Std.int(Math.min(size,array.length)));
+        var count=getFloatTimeDomainData(samples,size,channel,offset);
+        for(i in 0...count)array[i]=Std.int((samples[i]+1)*127.5);
+        return count;
+    }
+
+
+
+	public function addEffect(effect:AudioEffect):Bool
+	{
+		if (__effects == null) __effects = [];
+
+		var index = __effects.indexOf(effect);
+		if (index == -1)
+		{
+			if (__effects.length > 6) return false;
+
+			index = __effects.indexOf(null);
+			if (index == -1)
+			{
+				index = __effects.length;
+				__effects.push(effect);
+			}
+			else
+			{
+				__effects[index] = effect;
+			}
+
+			effect.__appliedSources.push(this);
+			if (!effect.bypass) __addCompatEffect(index);
+		}
+		else if (!effect.bypass)
+		{
+			__updateCompatEffect(index);
+		}
+
+		return true;
+	}
+
+	public function removeEffect(effect:AudioEffect):Void
+	{
+		if (__effects != null)
+		{
+			var index = __effects.indexOf(effect);
+			if (index != -1)
+			{
+				if (!effect.bypass) __removeCompatEffect(index);
+				__effects[index] = null;
+				//while (__effects[__effects.length - 1] == null) __effects.pop();
+
+				effect.__appliedSources.remove(this);
+				if (effect.autoDispose) effect.dispose();
+			}
+		}
+	}
+
+	public function clearEffects():Void
+	{
+		if (__effects != null)
+		{
+			var index = __effects.length, effect:AudioEffect;
+			while (index-- > 0)
+			{
+				effect = __effects[index];
+				if (effect == null) continue;
+
+				if (!effect.bypass) __removeCompatEffect(index);
+				if (effect.autoDispose) effect.dispose();
+			}
+
+			__effects = null;
+		}
+	}
+
+	public function getEffectAt(index:Int):AudioEffect
+	{
+		return __effects[index];
+	}
+
+	public function getEffectIndex(effect:AudioEffect):Int
+	{
+		return __effects.indexOf(effect);
+	}
 }
 
 #if flash

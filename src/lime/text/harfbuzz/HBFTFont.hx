@@ -45,5 +45,12 @@ abstract HBFTFont(HBFont) to HBFont from CFFIPointer to CFFIPointer
 		#end
 		return value;
 	}
+
+	public function changed():Void
+	{
+		#if (lime_cffi && lime_harfbuzz && !macro)
+		NativeCFFI.lime_hb_ft_font_changed(this);
+		#end
+	}
 }
 #end

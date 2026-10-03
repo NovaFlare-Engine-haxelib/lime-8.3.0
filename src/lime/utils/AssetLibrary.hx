@@ -967,4 +967,7 @@ class AssetLibrary
 			promise.progress(this.bytesLoaded, this.bytesTotal);
 		}
 	}
+
+	public function getAudioBufferStream(id:String):AudioBuffer return getAudioBuffer(id);
+	public function loadAudioBufferStream(id:String):Future<AudioBuffer> return loadAudioBuffer(id);
 }

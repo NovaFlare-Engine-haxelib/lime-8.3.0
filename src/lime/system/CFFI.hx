@@ -48,8 +48,11 @@ class CFFI
 	 * @param	lazy	Whether to load the symbol immediately, or to allow lazy loading
 	 * @return	The loaded method
 	 */
+
 	public static function load(library:String, method:String, args:Int = 0, lazy:Bool = false):Dynamic
 	{
+        if(library=="lime")method=compatMethod(method,args);
+
 		#if (disable_cffi || macro || hl)
 		var enabled = false;
 		#end
@@ -193,10 +196,11 @@ class CFFI
 		return result;
 	}
 
+
 	public static macro function loadPrime(library:String, method:String, signature:String, lazy:Bool = false):Dynamic
 	{
 		#if (!display && !macro && cpp && !disable_cffi)
-		return cpp.Prime.load(library, method, signature, lazy);
+		return cpp.Prime.load(library, library=="lime" ? compatMethod(method,signature.length-1) : method, signature, lazy);
 		#else
 		var args = signature.length - 1;
 
@@ -368,6 +372,18 @@ class CFFI
 
 		return null;
 	}
+
+
+    @:noCompletion public static function compatMethod(method:String,args:Int):String {
+        return switch(method) {
+            case "lime_file_dialog_open_directory" if(args==5):method+"_compat";
+            case "lime_file_dialog_open_file" if(args==8 || args==-1):method+"_compat";
+            case "lime_file_dialog_save_file" if(args==7 || args==-1):method+"_compat";
+            case "lime_window_alert" if(args==5):method+"_compat";
+            default:method;
+        };
+    }
+
 }
 
 #if cs

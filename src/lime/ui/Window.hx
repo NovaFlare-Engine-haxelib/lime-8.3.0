@@ -1,5 +1,7 @@
 package lime.ui;
 
+import lime._internal.backend.native.NativeCFFI;
+
 import lime.app.Application;
 import lime.app.Event;
 import lime.graphics.Image;
@@ -63,7 +65,7 @@ class Window
 	public var onActivate(default, null) = new Event<Void->Void>();
 	public var onClose(default, null) = new Event<Void->Void>();
 	public var onDeactivate(default, null) = new Event<Void->Void>();
-	public var onDropFile(default, null) = new Event<String->Void>();
+	public var onDropFile(default, null) = new lime._internal.compat.DropFileEvent();
 	public var onEnter(default, null) = new Event<Void->Void>();
 	public var onExpose(default, null) = new Event<Void->Void>();
 	public var onFocusIn(default, null) = new Event<Void->Void>();
@@ -146,6 +148,7 @@ class Window
 	public var width(get, set):Int;
 	public var x(get, set):Int;
 	public var y(get, set):Int;
+	public var alwaysOnTop(get, set):Bool;
 
 	@:allow(openfl.display.Stage)
 	@:allow(lime.app.Application)
@@ -168,6 +171,7 @@ class Window
 	@:noCompletion private var __y:Int;
 	@:noCompletion private var __minWidth:Int = 0;
 	@:noCompletion private var __minHeight:Int = 0;
+	@:noCompletion private var __alwaysOnTop:Bool = false;
 	@:noCompletion private var __maxWidth:Int = 0x7FFFFFFF;
 	@:noCompletion private var __maxHeight:Int = 0x7FFFFFFF;
 	@:noCompletion private var __lockRender:Bool = false;
@@ -198,6 +202,7 @@ class Window
 				"textInputEnabled": {get: p.get_textInputEnabled, set: p.set_textInputEnabled},
 				"title": {get: p.get_title, set: p.set_title},
 				"visible": {get: p.get_visible, set: p.set_visible},
+				"alwaysOnTop": {get: p.get_alwaysOnTop, set: p.set_alwaysOnTop},
 				"width": {get: p.get_width, set: p.set_width},
 				"x": {get: p.get_x, set: p.set_y},
 				"y": {get: p.get_x, set: p.set_y}
@@ -441,9 +446,27 @@ class Window
 		#end
 	}
 
-	public function alert(message:String = null, title:String = null):Void
+    // Accepts NF alert(message,title) and CNE/Origin alert(type,message,title,buttons).
+    public function alert(messageOrType:Dynamic=null, titleOrMessage:String=null, title:String=null, buttons:Array<String>=null):Int {
+        #if (lime_cffi && cpp && !macro && !disable_cffi)
+        if(Std.isOfType(messageOrType,String) || messageOrType==null) {
+            __backend.alert(cast messageOrType,titleOrMessage);return 0;
+        }
+        return @:privateAccess NativeCFFI.lime_window_alert(__backend.handle,messageOrType,titleOrMessage,title,buttons);
+        #else
+        __backend.alert(Std.isOfType(messageOrType,String)?cast messageOrType:titleOrMessage,title);return -1;
+        #end
+    }
+
+
+	public function setVSyncMode(mode:lime.ui.WindowVSyncMode):Bool
 	{
-		__backend.alert(message, title);
+		return __backend.setVSyncMode(mode);
+	}
+
+	public function getNativeHandle():Dynamic
+	{
+		return __backend.getNativeHandle();
 	}
 
 	public function close():Void
@@ -804,6 +827,16 @@ class Window
 		return !__hidden;
 	}
 
+	@:noCompletion private inline function get_alwaysOnTop():Bool
+	{
+		return __alwaysOnTop;
+	}
+
+	@:noCompletion private function set_alwaysOnTop(value:Bool):Bool
+	{
+		return __alwaysOnTop = __backend.setAlwaysOnTop(value);
+	}
+
 	@:noCompletion private inline function get_width():Int
 	{
 		return __width;
@@ -836,6 +869,17 @@ class Window
 		move(__x, value);
 		return __y;
 	}
+
+
+    public var nativeHandle(get,never):Dynamic;
+    private function get_nativeHandle():Dynamic return getNativeHandle();
+    public var onKeyDownPrecise(default,null)=new Event<KeyCode->KeyModifier->haxe.Int64->Void>();
+    public var onKeyUpPrecise(default,null)=new Event<KeyCode->KeyModifier->haxe.Int64->Void>();
+    public var onDropText(default,null)=new Event<String->String->Float->Float->Void>();
+    public var onDropBegin(default,null)=new Event<Void->Void>();
+    public var onDropComplete(default,null)=new Event<Float->Float->Void>();
+    public var onDropPosition(default,null)=new Event<Float->Float->Void>();
+
 }
 
 #if air

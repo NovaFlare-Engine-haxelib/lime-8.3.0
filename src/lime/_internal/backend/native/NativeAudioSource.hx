@@ -593,4 +593,54 @@ class NativeAudioSource
 
 		return position;
 	}
+
+	public function addEffect(index:Int):Void
+	{
+        #if lime_openal
+
+		updateEffect(index);
+	
+        #end
+    }
+
+	public function updateEffect(index:Int):Void
+	{
+        #if lime_openal
+
+		if (handle != null)
+		@:privateAccess
+		{
+			var effect = parent.__effects[index];
+			AL.source3i(handle, AL.AUXILIARY_SEND_FILTER, effect.__alAux, index, effect.__alFilter);
+			if (effect.__alFilter != null) AL.sourcei(handle, AL.DIRECT_FILTER, effect.__alFilter);
+		}
+	
+        #end
+    }
+
+	public function removeEffect(index:Int):Void
+	{
+        #if lime_openal
+
+		if (handle != null)
+		{
+			//AL.source3i(handle, AL.AUXILIARY_SEND_FILTER, AL.EFFECTSLOT_NULL, index, AL.FILTER_NULL);
+			AL.removeSend(handle, index);
+		}
+	
+        #end
+    }
+
+
+
+    public function getLatency():Float {
+        #if (lime_cffi && lime_openal && !macro)
+        if(handle!=null && AL.isExtensionPresent("AL_SOFT_source_latency")) {
+            var result=AL.getSourcedvSOFT(handle,AL.SEC_OFFSET_LATENCY_SOFT,2);
+            if(result!=null && result.length>1)return result[1]*1000;
+        }
+        #end
+        return 0;
+    }
+
 }

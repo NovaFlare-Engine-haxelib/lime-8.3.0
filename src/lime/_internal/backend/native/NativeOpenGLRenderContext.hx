@@ -3402,4 +3402,11 @@ class NativeOpenGLRenderContext
 
 		__initialized = true;
 	}
+
+	public function blendBarrier():Void
+	{
+		#if (lime_cffi && (lime_opengl || lime_opengles) && !macro)
+		NativeCFFI.lime_gl_blend_barrier();
+		#end
+	}
 }

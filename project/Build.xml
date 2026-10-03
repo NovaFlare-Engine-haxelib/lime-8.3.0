@@ -63,6 +63,7 @@
 		</section>
 
 		<file name="src/ExternalInterface.cpp" />
+		<file name="src/compat/LimeCompat.cpp" />
 
 		<section if="LIME_CAIRO">
 

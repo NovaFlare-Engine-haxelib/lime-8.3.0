@@ -92,18 +92,16 @@ class PNG
 		if (CFFI.enabled)
 		{
 			#if !cs
-			return NativeCFFI.lime_image_encode(image.buffer, 0, 0, Bytes.alloc(0));
+			var bytes = NativeCFFI.lime_image_encode(image.buffer, 0, 0, Bytes.alloc(0));
+			if (bytes != null) return bytes;
 			#else
 			var data:Dynamic = NativeCFFI.lime_image_encode(image.buffer, 0, 0, null);
-			return @:privateAccess new Bytes(data.length, data.b);
+			if (data != null) return @:privateAccess new Bytes(data.length, data.b);
 			#end
 		}
 		#end
 
 		#if ((!js || !html5) && format)
-		#if (sys && (!disable_cffi || !format) && !macro)
-		else
-		#end
 		{
 			try
 			{
@@ -130,7 +128,10 @@ class PNG
 						color: ColTrue(true),
 						interlaced: false
 					}));
-				data.add(CData(Zlib.compress(bytes)));
+				// Use the Haxe runtime compressor here instead of Lime's native
+				// zlib binding; this path must still work when the native PNG encoder
+				// is unavailable during platform project generation.
+				data.add(CData(haxe.zip.Compress.run(bytes, 9)));
 				data.add(CEnd);
 
 				var output = new BytesOutput();

@@ -29,6 +29,8 @@ namespace lime {
 		GamepadEventType type;
 		double axisValue;
 
+		double timestamp;
+
 		static ValuePointer* callback;
 		static ValuePointer* eventObject;
 

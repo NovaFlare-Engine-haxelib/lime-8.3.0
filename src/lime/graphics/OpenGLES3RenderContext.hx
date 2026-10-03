@@ -4894,6 +4894,11 @@ abstract OpenGLES3RenderContext(Dynamic) from Dynamic to Dynamic
 	{
 		return null;
 	}
+
+public inline function blendBarrier():Void
+{
+	this.blendBarrier();
+}
 }
 #end
 #end

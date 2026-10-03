@@ -204,5 +204,13 @@ abstract WebGLRenderContext(WebGL2RenderContext)
 		#end
 	}
 	#end
+
+	public inline function blendBarrier():Void
+	{
+		// Not supported on Web
+		#if !lime_webgl
+		this.blendBarrier();
+		#end
+	}
 }
 #end

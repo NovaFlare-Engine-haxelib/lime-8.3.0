@@ -475,4 +475,43 @@ class AudioBuffer
 		return __srcCustom = value;
 		#end
 	}
+
+
+    public var decoder:AudioDecoder;
+    public var dataFormat:AudioFormat = AudioFormat.S16;
+    public function load():Void {
+        if(decoder!=null && data==null) {
+            var decoded=fromDecoder(decoder);
+            if(decoded!=null) {data=decoded.data;channels=decoded.channels;sampleRate=decoded.sampleRate;bitsPerSample=decoded.bitsPerSample;}
+        }
+    }
+    public function loadAsync(?onLoad:AudioBuffer->Void, ?onError:String->Void):Void {
+        try {load();if(onLoad!=null)onLoad(this);}catch(error:Dynamic) {if(onError!=null)onError(Std.string(error));}
+    }
+    // NF playback continues to use fully decoded PCM. The stream factories are
+    // compatible aliases; they do not promise reduced memory use on this backend.
+    public static inline function fromBytesStream(bytes:Bytes):AudioBuffer return fromBytes(bytes);
+    public static inline function fromFileStream(path:String):AudioBuffer return fromFile(path);
+    public static inline function fromFilesStream(paths:Array<String>):AudioBuffer return fromFiles(paths);
+    public static function fromDecoder(audioDecoder:Dynamic, stream:Bool=false, autoDisposeDecoder:Bool=false):AudioBuffer {
+        if(audioDecoder==null)return null;
+        var total:haxe.Int64=audioDecoder.total();
+        if(total.high!=0 || total.low<0)return null;
+        audioDecoder.rewind();
+        var raw:Bytes=audioDecoder.decode(total.low,AudioFormat.S16);
+        if(raw==null)return null;
+        var result=new AudioBuffer();result.channels=audioDecoder.channels;result.sampleRate=audioDecoder.sampleRate;
+        result.bitsPerSample=16;result.data=UInt8Array.fromBytes(raw);
+        if(autoDisposeDecoder)audioDecoder.dispose();else result.decoder=audioDecoder;
+        return result;
+    }
+    public static function loadFromDecoder(audioDecoder:Dynamic, autoDisposeDecoder:Bool=false):Future<AudioBuffer>
+        return new Future(function() {var result=fromDecoder(audioDecoder,false,autoDisposeDecoder);if(result==null)throw "Invalid audio decoder";return result;},true);
+    public static function getCodec(resource:Dynamic):AudioCodec {
+        var raw:Bytes=Std.isOfType(resource,String) ? #if sys sys.io.File.getBytes(cast resource) #else null #end : cast resource;
+        if(raw==null||raw.length<4)return null;
+        var header=raw.getString(0,4);
+        return switch(header) {case "RIFF":AudioCodec.WAVE;case "OggS":AudioCodec.VORBIS;case "fLaC":AudioCodec.FLAC;default:AudioCodec.MPEG;};
+    }
+
 }

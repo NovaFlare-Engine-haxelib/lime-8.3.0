@@ -2601,6 +2601,11 @@ class GL
 	{
 		return (object == null) ? 0 : @:privateAccess object.id;
 	}
+
+	public static inline function blendBarrier():Void
+	{
+		context.blendBarrier();
+	}
 }
 
 #if (!js || !html5 || doc_gen)
@@ -2654,6 +2659,7 @@ class GL
 	var SAMPLER = 9;
 	var SYNC = 10;
 	var TRANSFORM_FEEDBACK = 11;
+
 }
 #end
 #end

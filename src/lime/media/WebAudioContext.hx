@@ -110,6 +110,16 @@ class WebAudioContext
 		?errorCallback:Dynamic /*AudioBufferCallback*/):Void {}
 
 	public function startRendering():Void {}
+
+	public function suspend():Dynamic /*Promise<Void>*/
+	{
+		return null;
+	}
+
+	public function close():Dynamic /*Promise<Void>*/
+	{
+		return null;
+	}
 }
 #else
 typedef WebAudioContext = js.html.audio.AudioContext;

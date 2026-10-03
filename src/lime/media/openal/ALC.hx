@@ -4,6 +4,7 @@ package lime.media.openal;
 import lime._internal.backend.native.NativeCFFI;
 import lime.system.CFFI;
 import lime.system.CFFIPointer;
+import haxe.io.Bytes;
 
 #if !lime_debug
 @:fileXml('tags="haxe,release"')
@@ -25,14 +26,36 @@ class ALC
 	public static inline var INVALID_ENUM:Int = 0xA003;
 	public static inline var INVALID_VALUE:Int = 0xA004;
 	public static inline var OUT_OF_MEMORY:Int = 0xA005;
+	public static inline var MAJOR_VERSION:Int = 0x1000;
+	public static inline var MINOR_VERSION:Int = 0x1001;
 	public static inline var ATTRIBUTES_SIZE:Int = 0x1002;
 	public static inline var ALL_ATTRIBUTES:Int = 0x1003;
+	/* ALC_ENUMERATION_EXT */
 	public static inline var DEFAULT_DEVICE_SPECIFIER:Int = 0x1004;
 	public static inline var DEVICE_SPECIFIER:Int = 0x1005;
 	public static inline var EXTENSIONS:Int = 0x1006;
+	/* ALC_EXT_CAPTURE */
+	public static inline var CAPTURE_DEVICE_SPECIFIER:Int = 0x310;
+	public static inline var CAPTURE_DEFAULT_DEVICE_SPECIFIER:Int = 0x311;
+	public static inline var CAPTURE_SAMPLES:Int = 0x312;
+	/* ALC_ENUMERATE_ALL_EXT */
 	public static inline var ENUMERATE_ALL_EXT:Int = 1;
 	public static inline var DEFAULT_ALL_DEVICES_SPECIFIER:Int = 0x1012;
 	public static inline var ALL_DEVICES_SPECIFIER:Int = 0x1013;
+	/* ALC_EXT_disconnect */
+	public static inline var CONNECTED:Int = 0x313;
+	/* ALC_SOFT_device_clock */
+	public static inline var DEVICE_CLOCK_SOFT:Int = 0x1600;
+	public static inline var DEVICE_LATENCY_SOFT:Int = 0x1601;
+	public static inline var DEVICE_CLOCK_LATENCY_SOFT:Int = 0x1602;
+	/* ALC_SOFT_system_events */
+	public static inline var PLAYBACK_DEVICE_SOFT:Int = 0x19D4;
+	public static inline var CAPTURE_DEVICE_SOFT:Int = 0x19D5;
+	public static inline var EVENT_TYPE_DEFAULT_DEVICE_CHANGED_SOFT:Int = 0x19D6;
+	public static inline var EVENT_TYPE_DEVICE_ADDED_SOFT:Int = 0x19D7;
+	public static inline var EVENT_TYPE_DEVICE_REMOVED_SOFT:Int = 0x19D8;
+	public static inline var EVENT_SUPPORTED_SOFT:Int = 0x19D9;
+	public static inline var EVENT_NOT_SUPPORTED_SOFT:Int = 0x19DA;
 
 	public static function closeDevice(device:ALDevice):Bool
 	{
@@ -124,10 +147,10 @@ class ALC
 		}
 	}
 
-	public static function getIntegerv(device:ALDevice, param:Int, size:Int):Array<Int>
+	public static function getIntegerv(device:ALDevice, param:Int, count:Int = 1):Array<Int>
 	{
 		#if (lime_cffi && lime_openal && !macro)
-		var result = NativeCFFI.lime_alc_get_integerv(device, param, size);
+		var result = NativeCFFI.lime_alc_get_integerv(device, param, count);
 		#if hl
 		if (result == null) return [];
 		var _result = [];
@@ -147,6 +170,24 @@ class ALC
 		#if (lime_cffi && lime_openal && !macro)
 		var result = NativeCFFI.lime_alc_get_string(device, param);
 		return CFFI.stringValue(result);
+		#else
+		return null;
+		#end
+	}
+
+	public static function getStringList(device:ALDevice, param:Int):Array<String>
+	{
+		#if (lime_cffi && lime_openal && !macro)
+		var result = NativeCFFI.lime_alc_get_string_list(device, param);
+		#if hl
+		if (result == null) return [];
+		var _result = [];
+		for (i in 0...result.length)
+			_result[i] = CFFI.stringValue(result[i]);
+		return _result;
+		#else
+		return result;
+		#end
 		#else
 		return null;
 		#end
@@ -200,6 +241,121 @@ class ALC
 	{
 		#if (lime_cffi && lime_openal && !macro)
 		NativeCFFI.lime_alc_suspend_context(context);
+		#end
+	}
+
+	public static function isExtensionPresent(device:ALDevice, extname:String):Bool
+	{
+		#if (lime_cffi && lime_openal && !macro)
+		return NativeCFFI.lime_alc_is_extension_present(device, extname);
+		#else
+		return false;
+		#end
+	}
+
+	public static function eventControlSOFT(events:Array<Int>, enable:Bool):Void
+	{
+		#if (lime_cffi && lime_openalsoft && !macro)
+		#if hl
+		var _events = null;
+		if (events != null)
+		{
+			_events = new hl.NativeArray<Int>(events.length);
+			for (i in 0...events.length)
+				_events[i] = events[i];
+		}
+		var events = _events;
+		#end
+		NativeCFFI.lime_alc_event_control_soft(events.length, events, enable);
+		#end
+	}
+
+	public static function eventCallbackSOFT(callback:Dynamic):Void
+	{
+		#if (lime_cffi && lime_openalsoft && !macro)
+		NativeCFFI.lime_alc_event_callback_soft(callback);
+		#end
+	}
+
+	public static function reopenDeviceSOFT(device:ALDevice, newDeviceName:String, attributes:Array<Int>):Bool
+	{
+		#if (lime_cffi && lime_openalsoft && !macro)
+		#if hl
+		var _attributes = null;
+		if (attributes != null)
+		{
+			_attributes = new hl.NativeArray<Int>(attributes.length);
+			for (i in 0...attributes.length)
+				_attributes[i] = attributes[i];
+		}
+		var attributes = _attributes;
+		#end
+		return NativeCFFI.lime_alc_reopen_device_soft(device, newDeviceName, attributes);
+		#else
+		return false;
+		#end
+	}
+
+	public static function captureOpenDevice(deviceName:String, frequency:Int, format:Int, bufferSize:Int):ALDevice
+	{
+		#if (lime_cffi && lime_openal && !macro)
+		var handle = NativeCFFI.lime_alc_capture_open_device(deviceName, frequency, format, bufferSize);
+
+		if (handle != null)
+		{
+			return new ALDevice(handle);
+		}
+		#end
+
+		return null;
+	}
+
+	public static function captureCloseDevice(device:ALDevice):Bool
+	{
+		#if (lime_cffi && lime_openal && !macro)
+		return NativeCFFI.lime_alc_capture_close_device(device);
+		#end
+
+		return false;
+	}
+
+	public static function captureStart(device:ALDevice):Void
+	{
+		#if (lime_cffi && lime_openal && !macro)
+		NativeCFFI.lime_alc_capture_start(device);
+		#end
+	}
+
+	public static function captureStop(device:ALDevice):Void
+	{
+		#if (lime_cffi && lime_openal && !macro)
+		NativeCFFI.lime_alc_capture_stop(device);
+		#end
+	}
+
+	public static function captureSamples(device:ALDevice, buffer:Bytes, samples:Int):Void
+	{
+		#if (lime_cffi && lime_openal && !macro)
+		NativeCFFI.lime_alc_capture_samples(device, buffer, samples);
+		#end
+	}
+	
+	// TODO: getInteger64vSOFT isn't possible for now, so just make it up as of now
+	public static function getDoublevSOFT(device:ALDevice, param:Int, count:Int = 1):Array<Float>
+	{
+		#if (lime_cffi && lime_openal && !macro)
+		var result = NativeCFFI.lime_alc_get_doublev_soft(device, param, count);
+		#if hl
+		if (result == null) return [];
+		var _result:Array<Float> = [];
+		for (i in 0...result.length)
+			_result[i] = result[i];
+		return _result;
+		#else
+		return result;
+		#end
+		#else
+		return null;
 		#end
 	}
 }

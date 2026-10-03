@@ -1,4 +1,6 @@
 package lime.media;
+import haxe.Timer;
+import lime._internal.backend.native.NativeCFFI;
 
 import lime.app.Event;
 import lime.system.System;
@@ -20,6 +22,7 @@ import flash.media.SoundTransform;
 @:fileXml('tags="haxe,release"')
 @:noDebug
 #end
+@:access(lime._internal.backend.native.NativeCFFI)
 @:access(lime.media.openal.ALDevice)
 class AudioManager
 {
@@ -109,33 +112,39 @@ class AudioManager
 	**/
 	public static function init(context:AudioContext = null)
 	{
-		if (AudioManager.context != null) return;
-
-		if (context == null)
+		if (AudioManager.context == null)
 		{
-			context = new AudioContext();
-		}
+			if (context == null)
+			{
+				AudioManager.context = new AudioContext();
+				context = AudioManager.context;
 
-		AudioManager.context = context;
+				#if !lime_doc_gen
+				if (context.type == OPENAL)
+				{
+					var alc = context.openal;
 
-		#if lime_openal
-		if (context.type == OPENAL)
-		{
-			refresh();
-
-			#if (lime_openalsoft && !mobile)
-			if (__reopenDeviceSupported) AL.disable(AL.STOP_SOURCES_ON_DISCONNECT_SOFT);
-			if (__systemEventsSupported) {
-				ALC.eventControlSOFT([
-					ALC.EVENT_TYPE_DEFAULT_DEVICE_CHANGED_SOFT,
-					ALC.EVENT_TYPE_DEVICE_ADDED_SOFT,
-					ALC.EVENT_TYPE_DEVICE_REMOVED_SOFT],
-				true);
-				ALC.eventCallbackSOFT(__deviceEventCallback);
+					var device = alc.openDevice();
+					if (device != null)
+					{
+						var ctx = alc.createContext(device);
+						alc.makeContextCurrent(ctx);
+						alc.processContext(ctx);
+					}
+				}
+				#end
 			}
+
+			AudioManager.context = context;
+
+			#if (lime_cffi && !macro && lime_openal && (ios || tvos || mac))
+			var timer = new Timer(100);
+			timer.run = function()
+			{
+				NativeCFFI.lime_al_cleanup();
+			};
 			#end
 		}
-		#end
 	}
 
 	/**
@@ -334,22 +343,18 @@ class AudioManager
 	**/
 	public static function resume():Void
 	{
-		#if (lime_openal && !lime_doc_gen)
+		#if !lime_doc_gen
 		if (context != null && context.type == OPENAL)
 		{
-			var currentContext = ALC.getCurrentContext();
+			var alc = context.openal;
+			var currentContext = alc.getCurrentContext();
+
 			if (currentContext != null)
 			{
-				var device = ALC.getContextsDevice(currentContext);
-				if (device != null) ALC.resumeDevice(device);
-
-				ALC.processContext(currentContext);
+				var device = alc.getContextsDevice(currentContext);
+				alc.resumeDevice(device);
+				alc.processContext(currentContext);
 			}
-		}
-		#elseif (js && html5)
-		if (context != null && context.type == WEB)
-		{
-			context.web.resume();
 		}
 		#end
 	}
@@ -361,27 +366,23 @@ class AudioManager
 	**/
 	public static function shutdown():Void
 	{
-		#if (lime_openal && !lime_doc_gen)
+		#if !lime_doc_gen
 		if (context != null && context.type == OPENAL)
 		{
-			var currentContext = ALC.getCurrentContext();
+			var alc = context.openal;
+			var currentContext = alc.getCurrentContext();
+
 			if (currentContext != null)
 			{
-				ALC.makeContextCurrent(null);
-				ALC.destroyContext(currentContext);
+				var device = alc.getContextsDevice(currentContext);
+				alc.makeContextCurrent(null);
+				alc.destroyContext(currentContext);
 
-				var device = ALC.getContextsDevice(currentContext);
-				if (device != null) ALC.closeDevice(device);
+				if (device != null)
+				{
+					alc.closeDevice(device);
+				}
 			}
-		}
-		#elseif (js && html5)
-		if (context != null && context.type == WEB)
-		{
-			#if lime_howlerjs
-			Howler.unload();
-			#else
-			context.web.close();
-			#end
 		}
 		#end
 
@@ -395,22 +396,22 @@ class AudioManager
 	**/
 	public static function suspend():Void
 	{
-		#if (lime_openal && !lime_doc_gen)
+		#if !lime_doc_gen
 		if (context != null && context.type == OPENAL)
 		{
-			var currentContext = ALC.getCurrentContext();
+			var alc = context.openal;
+			var currentContext = alc.getCurrentContext();
+
 			if (currentContext != null)
 			{
-				ALC.suspendContext(currentContext);
+				alc.suspendContext(currentContext);
+				var device = alc.getContextsDevice(currentContext);
 
-				var device = ALC.getContextsDevice(currentContext);
-				if (device != null) ALC.pauseDevice(device);
+				if (device != null)
+				{
+					alc.pauseDevice(device);
+				}
 			}
-		}
-		#elseif (js && html5)
-		if (context != null && context.type == WEB)
-		{
-			context.web.suspend();
 		}
 		#end
 	}

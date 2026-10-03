@@ -492,19 +492,13 @@ class Application extends Module
 				window.onRenderContextRestored.add(onRenderContextRestored);
 				window.onDeactivate.add(onWindowDeactivate);
 				window.onDropFile.add(onWindowDropFile);
-                window.onDropText.add(onWindowDropText);
-                window.onDropBegin.add(onWindowDropBegin);
-                window.onDropComplete.add(onWindowDropComplete);
-                window.onDropPosition.add(onWindowDropPosition);
 				window.onEnter.add(onWindowEnter);
 				window.onExpose.add(onWindowExpose);
 				window.onFocusIn.add(onWindowFocusIn);
 				window.onFocusOut.add(onWindowFocusOut);
 				window.onFullscreen.add(onWindowFullscreen);
 				window.onKeyDown.add(onKeyDown);
-                window.onKeyDownPrecise.add(onKeyDownPrecise);
 				window.onKeyUp.add(onKeyUp);
-                window.onKeyUpPrecise.add(onKeyUpPrecise);
 				window.onLeave.add(onWindowLeave);
 				window.onMinimize.add(onWindowMinimize);
 				window.onMouseDown.add(onMouseDown);
@@ -594,11 +588,8 @@ class Application extends Module
 		onGamepadConnect(gamepad);
 
 		gamepad.onAxisMove.add(onGamepadAxisMove.bind(gamepad));
-                gamepad.onAxisMovePrecise.add(onGamepadAxisMovePrecise.bind(gamepad));
 		gamepad.onButtonDown.add(onGamepadButtonDown.bind(gamepad));
-                gamepad.onButtonDownPrecise.add(onGamepadButtonDownPrecise.bind(gamepad));
 		gamepad.onButtonUp.add(onGamepadButtonUp.bind(gamepad));
-                gamepad.onButtonUpPrecise.add(onGamepadButtonUpPrecise.bind(gamepad));
 		gamepad.onDisconnect.add(onGamepadDisconnect.bind(gamepad));
 	}
 

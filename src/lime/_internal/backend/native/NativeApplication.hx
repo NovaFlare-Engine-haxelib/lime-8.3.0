@@ -216,16 +216,13 @@ class NativeApplication
 		Clipboard.__update();
 	}
 
-    private function handleDropEvent():Void {
-        var target=parent.__windowByID.get(dropEventInfo.windowID);
-        var windows=target==null?parent.windows:[target];
-        for(window in windows) switch(dropEventInfo.type) {
-            case DROP_FILE:window.onDropFile.dispatch(CFFI.stringValue(dropEventInfo.file),null,dropEventInfo.x,dropEventInfo.y);
-            case DROP_TEXT:window.onDropText.dispatch(CFFI.stringValue(dropEventInfo.file),null,dropEventInfo.x,dropEventInfo.y);
-            case DROP_BEGIN:window.onDropBegin.dispatch();
-            case DROP_COMPLETE:window.onDropComplete.dispatch(dropEventInfo.x,dropEventInfo.y);
-        }
-    }
+	private function handleDropEvent():Void
+	{
+		for (window in parent.windows)
+		{
+			window.onDropFile.dispatch(CFFI.stringValue(dropEventInfo.file));
+		}
+	}
 
 
 	private function handleGamepadEvent():Void
@@ -234,15 +231,15 @@ class NativeApplication
 		{
 			case AXIS_MOVE:
 				var gamepad = Gamepad.devices.get(gamepadEventInfo.id);
-				if (gamepad != null) { gamepad.onAxisMove.dispatch(gamepadEventInfo.axis, gamepadEventInfo.axisValue); gamepad.onAxisMovePrecise.dispatch(gamepadEventInfo.axis,gamepadEventInfo.axisValue,haxe.Int64.fromFloat(gamepadEventInfo.timestamp)); }
+				if (gamepad != null) gamepad.onAxisMove.dispatch(gamepadEventInfo.axis, gamepadEventInfo.axisValue);
 
 			case BUTTON_DOWN:
 				var gamepad = Gamepad.devices.get(gamepadEventInfo.id);
-				if (gamepad != null) { gamepad.onButtonDown.dispatch(gamepadEventInfo.button); gamepad.onButtonDownPrecise.dispatch(gamepadEventInfo.button,haxe.Int64.fromFloat(gamepadEventInfo.timestamp)); }
+				if (gamepad != null) gamepad.onButtonDown.dispatch(gamepadEventInfo.button);
 
 			case BUTTON_UP:
 				var gamepad = Gamepad.devices.get(gamepadEventInfo.id);
-				if (gamepad != null) { gamepad.onButtonUp.dispatch(gamepadEventInfo.button); gamepad.onButtonUpPrecise.dispatch(gamepadEventInfo.button,haxe.Int64.fromFloat(gamepadEventInfo.timestamp)); }
+				if (gamepad != null) gamepad.onButtonUp.dispatch(gamepadEventInfo.button);
 
 			case CONNECT:
 				Gamepad.__connect(gamepadEventInfo.id);
@@ -295,11 +292,9 @@ class NativeApplication
 			{
 				case KEY_DOWN:
 					window.onKeyDown.dispatch(keyCode, modifier);
-                    window.onKeyDownPrecise.dispatch(keyCode,modifier,haxe.Int64.fromFloat(keyEventInfo.timestamp));
 
 				case KEY_UP:
 					window.onKeyUp.dispatch(keyCode, modifier);
-                    window.onKeyUpPrecise.dispatch(keyCode,modifier,haxe.Int64.fromFloat(keyEventInfo.timestamp));
 			}
 
 			#if (windows || linux)

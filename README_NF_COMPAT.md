@@ -1,9 +1,7 @@
-# NovaFlare compatibility
+# NovaFlare additive compatibility interfaces
 
-Keeps NovaFlare's SDL 2.30.12 and ordinary hxcpp backend. Adds the CNE/Origin CFFI primitive union, callable adapters, Future/Promise methods, audio decoder/source APIs, and both file-drop callback shapes.
+Restores NF AudioManager init/resume/suspend/shutdown, Future/Promise implementations and the original SDL2 event pump. Newly declared precise input/drop/device events are optional compatibility stubs and are not automatically wired into legacy update paths. Existing native primitive implementations retain their ABI; differing new dialog arities route to separate adapters. The original audio playback backend is retained; optional new audio effect routing is unsupported. SDL2 and ordinary hxcpp are retained.
 
-Prebuilt compatibility binaries cover Windows x64 and Android ARMv7/ARM64/x86_64, release and debug. Other targets must rebuild Lime before using the added native primitives.
+The earlier broad integration changed existing behavior and is superseded by this repair. Compatibility additions must preserve existing NF calls, defaults and update/render/audio paths. Unsupported additions may return a neutral result instead of replacing a legacy implementation.
 
-OGG/Vorbis, WAV PCM, and BMP adapters are implemented. Optional FLAC/MP3/Opus decoders and GIF/SVG/WebP animation entry points return an unsupported result. Stream-compatible buffers currently decode into memory. AudioSource keeps NF's original four-argument constructor (buffer, offset, length, loops), including integer offsets/lengths. New per-channel peak values fall back to zero when unavailable.
-
-Upstream licenses and contributor notices are preserved.
+Windows x64 and Android ARMv7/ARM64/x86_64 native Lime binaries have been rebuilt. The full game targets Windows x64 and Android ARM64. Visual gameplay acceptance is performed manually by the project owner.

@@ -454,7 +454,8 @@ class Window
         }
         return @:privateAccess NativeCFFI.lime_window_alert(__backend.handle,messageOrType,titleOrMessage,title,buttons);
         #else
-        __backend.alert(Std.isOfType(messageOrType,String)?cast messageOrType:titleOrMessage,title);return -1;
+        if(Std.isOfType(messageOrType,String) || messageOrType==null) {__backend.alert(cast messageOrType,titleOrMessage);return 0;}
+        __backend.alert(titleOrMessage,title);return -1;
         #end
     }
 

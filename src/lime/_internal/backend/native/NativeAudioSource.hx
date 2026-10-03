@@ -603,20 +603,8 @@ class NativeAudioSource
         #end
     }
 
-	public function updateEffect(index:Int):Void
-	{
-        #if lime_openal
-
-		if (handle != null)
-		@:privateAccess
-		{
-			var effect = parent.__effects[index];
-			AL.source3i(handle, AL.AUXILIARY_SEND_FILTER, effect.__alAux, index, effect.__alFilter);
-			if (effect.__alFilter != null) AL.sourcei(handle, AL.DIRECT_FILTER, effect.__alFilter);
-		}
-	
-        #end
-    }
+	// Optional donor effect routing is unsupported on the NF audio backend.
+	public function updateEffect(index:Int):Void {}
 
 	public function removeEffect(index:Int):Void
 	{

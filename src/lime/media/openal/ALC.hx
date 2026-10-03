@@ -147,10 +147,10 @@ class ALC
 		}
 	}
 
-	public static function getIntegerv(device:ALDevice, param:Int, count:Int = 1):Array<Int>
+	public static function getIntegerv(device:ALDevice, param:Int, size:Int):Array<Int>
 	{
 		#if (lime_cffi && lime_openal && !macro)
-		var result = NativeCFFI.lime_alc_get_integerv(device, param, count);
+		var result = NativeCFFI.lime_alc_get_integerv(device, param, size);
 		#if hl
 		if (result == null) return [];
 		var _result = [];

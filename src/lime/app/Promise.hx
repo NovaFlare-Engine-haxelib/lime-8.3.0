@@ -49,6 +49,9 @@ import lime.system.WorkOutput;
 @:noDebug
 #end
 @:allow(lime.app.Future)
+#if (!hl && !js && !macro)
+@:generic
+#end
 class Promise<T>
 {
 	/**
@@ -100,22 +103,10 @@ class Promise<T>
 	**/
 	public function complete(data:T):Promise<T>
 	{
-		if (!ThreadPool.isMainThread())
-		{
-			haxe.MainLoop.runInMainThread(complete.bind(data));
-			return this;
-		}
-
 		if (!future.isError)
 		{
 			future.isComplete = true;
 			future.value = data;
-
-			if (jobID != -1)
-			{
-				FutureWork.cancelJob(jobID);
-				jobID = -1;
-			}
 
 			if (future.__completeListeners != null)
 			{
@@ -167,7 +158,11 @@ class Promise<T>
 	**/
 	public function completeAsync(doWork:WorkFunction<State->WorkOutput->Void>, ?state:State, ?mode:ThreadMode = MULTI_THREADED):Void
 	{
-		jobID = FutureWork.run(doWork, this, state, mode);
+		var pool = new ThreadPool(0, 1, mode);
+		pool.onComplete.add(value -> complete(cast value));
+		pool.onError.add(value -> error(value));
+		pool.onProgress.add(value -> { if (Reflect.hasField(value, "progress") && Reflect.hasField(value, "total")) progress(value.progress, value.total); });
+		jobID = pool.run(doWork, state);
 	}
 
 	/**
@@ -192,22 +187,10 @@ class Promise<T>
 	**/
 	public function error(msg:Dynamic):Promise<T>
 	{
-		if (!ThreadPool.isMainThread())
-		{
-			haxe.MainLoop.runInMainThread(error.bind(msg));
-			return this;
-		}
-
 		if (!future.isComplete)
 		{
 			future.isError = true;
 			future.error = msg;
-
-			if (jobID != -1)
-			{
-				FutureWork.cancelJob(jobID);
-				jobID = -1;
-			}
 
 			if (future.__errorListeners != null)
 			{
@@ -231,12 +214,6 @@ class Promise<T>
 	**/
 	public function progress(progress:Int, total:Int):Promise<T>
 	{
-		if (!ThreadPool.isMainThread())
-		{
-			haxe.MainLoop.runInMainThread(this.progress.bind(progress, total));
-			return this;
-		}
-
 		if (!future.isError && !future.isComplete)
 		{
 			if (future.__progressListeners != null)

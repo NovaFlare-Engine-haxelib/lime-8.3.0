@@ -389,7 +389,7 @@ class OpenALAudioContext
 
 	public function getSourcefv(source:ALSource, param:Int, count:Int = 1):Array<Float>
 	{
-		return AL.getSourcefv(source, param, count);
+		return AL.getSourcefv(source, param);
 	}
 
 	public function getSourcedvSOFT(source:ALSource, param:Int, count:Int = 1):Array<Float>
@@ -438,16 +438,9 @@ class OpenALAudioContext
 		return AL.isEnabled(capability);
 	}
 
-	public function isExtensionPresent(extname:String, device:ALDevice = null):Bool
+	public function isExtensionPresent(extname:String):Bool
 	{
-		if (device == null)
-		{
-			return AL.isExtensionPresent(extname);
-		}
-		else
-		{
-			return ALC.isExtensionPresent(device, extname);
-		}
+		return AL.isExtensionPresent(extname);
 	}
 
 	public function isSource(source:ALSource):Bool

@@ -785,16 +785,16 @@ class AL
 		#end
 	}
 
-	public static function getErrorString(?error:Int):String
+	public static function getErrorString():String
 	{
-		return switch (error != null ? error : getError())
+		return switch (getError())
 		{
 			case INVALID_NAME: "INVALID_NAME: Invalid parameter name";
 			case INVALID_ENUM: "INVALID_ENUM: Invalid enum value";
 			case INVALID_VALUE: "INVALID_VALUE: Invalid parameter value";
 			case INVALID_OPERATION: "INVALID_OPERATION: Illegal operation or call";
 			case OUT_OF_MEMORY: "OUT_OF_MEMORY: OpenAL has run out of memory";
-			default: "Unknown Error Enum: " + error;
+			default: "";
 		}
 	}
 
@@ -1208,7 +1208,7 @@ class AL
 		#end
 	}
 
-	public static function source3i(source:ALSource, param:Int, value1:Dynamic, value2:Int, value3:Dynamic):Void
+	public static function source3i(source:ALSource, param:Int, value1:Dynamic, value2:Int, value3:Int):Void
 	{
 		#if (lime_cffi && lime_openal && !macro)
 		NativeCFFI.lime_al_source3i(source, param, value1, value2, value3);
@@ -1410,6 +1410,6 @@ class AL
 		#end
 	}
 
-	public static inline var FFECT_AUTOWAH:Int = EFFECT_AUTOWAH;
+	public static inline var FFECT_AUTOWAH:Int = 0x000A;
 }
 #end

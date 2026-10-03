@@ -1039,5 +1039,4 @@ public static function getPreferredLocales():Array<Locale>
 	var DOCUMENTS = 3;
 	var FONTS = 4;
 	var USER = 5;
-
 }

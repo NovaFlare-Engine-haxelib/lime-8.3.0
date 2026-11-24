@@ -3,8 +3,9 @@
 #include "SDLGamepad.h"
 #include "SDLJoystick.h"
 #include <graphics/RenderThread.h>
+#include <graphics/FrameTimeline.h>
+#include <graphics/AndroidPerformanceHints.h>
 #include "../../graphics/opengl/OpenGLBindings.h"
-#include <graphics/PerformanceMonitor.h>
 #include <system/System.h>
 #include <map>
 #include <stdint.h>
@@ -43,24 +44,38 @@
 
 namespace lime {
 
+	static void BeginTimelinePhase() {
+		if (!FrameTimeline::CurrentWork() || !OpenGLBindings::isMultiThreaded) return;
+		if (auto* thread = OpenGLBindings::renderThread) thread->BeginTimelinePhase();
+	}
+
+	static void DispatchScheduledRender(RenderEvent* event, double periodMs) {
+		const bool threaded = OpenGLBindings::isMultiThreaded && OpenGLBindings::renderThread
+			&& OpenGLBindings::renderThread->IsRunning();
+		AndroidPerformanceHints::BeginRender(periodMs, threaded);
+		FrameTimeline::BeginRender();
+		BeginTimelinePhase();
+		if (!OpenGLBindings::isMultiThreaded)
+			FrameTimeline::BeginGpu(FrameTimeline::CurrentRender());
+		RenderEvent::Dispatch(event);
+		FrameTimeline::EndRender();
+		AndroidPerformanceHints::EndRender();
+	}
+
+	static void TraceFrameSetting(const char* name, std::uint64_t value) {
+		const auto now = FrameTimeline::Now();
+		if (now) FrameTimeline::Write({name, 0, now, now, value});
+	}
+
 
 	AutoGCRoot* Application::callback = 0;
 	SDLApplication* SDLApplication::currentApplication = 0;
 
 	const int analogAxisDeadZone = 1000;
 	static std::map<int, std::map<int, int>> gamepadsAxisMap;
-	static double accumulator = 0.0;
-	static double accumulatorRender = 0.0;
 	bool inBackground = false;
-	static uint64_t perfFreq = 0;
-	static uint64_t lastPerfCounter = 0;
-	static uint64_t nextPerfCounter = 0;
-	static uint64_t periodPerfTicks = 0;
-	static uint64_t lastRenderPerfCounter = 0;
-	static uint64_t nextRenderPerfCounter = 0;
-	static uint64_t periodRenderPerfTicks = 0;
-	static bool hrInit = false;
 
+	#ifdef _WIN32
 	static double FrameRateOverride (const char* name, double fallback) {
 		const char* value = std::getenv (name);
 		if (value == NULL || *value == '\0') return fallback;
@@ -69,7 +84,19 @@ namespace lime {
 		return end != value && *end == '\0' && parsed > 0.0
 			? parsed : fallback;
 	}
+	#endif
 
+	static Uint64 FramePeriodTicks (double periodMs, Uint64 frequency) {
+		const auto ticks = static_cast<Uint64>(periodMs * frequency / 1000.0);
+		return ticks ? ticks : 1;
+	}
+
+	static Uint64 AdvanceFrameDeadline (Uint64 deadline, Uint64 period, Uint64 now) {
+		const auto next = deadline + period;
+		return next > now ? next : now + period;
+	}
+
+	#if !defined(IPHONE) && !defined(EMSCRIPTEN)
 	// Sleep against an absolute high-resolution deadline and reserve only the
 	// final 100 microseconds for a short spin. The previous high-FPS path used
 	// _mm_pause for the whole 0.5-1.0 ms interval, permanently consuming a CPU
@@ -122,6 +149,9 @@ namespace lime {
 	}
 
 
+	#endif
+
+
 	SDLApplication::SDLApplication () {
 
 		initFlags = SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_TIMER | SDL_INIT_JOYSTICK;
@@ -142,9 +172,6 @@ namespace lime {
 		renderFramePeriod = 1000.0 / 60.0;
 		lockRender = false;
 
-		currentUpdate = 0;
-		lastUpdate = 0;
-		nextUpdate = 0;
 
 		ApplicationEvent applicationEvent;
 		ClipboardEvent clipboardEvent;
@@ -225,97 +252,83 @@ namespace lime {
 	}
 
 
+	void SDLApplication::DispatchScheduledUpdate () {
+
+		applicationEvent.type = UPDATE;
+		applicationEvent.deltaTime = framePeriod;
+		AndroidPerformanceHints::BeginUpdate();
+		FrameTimeline::BeginUpdate();
+		BeginTimelinePhase();
+		const auto update = FrameTimeline::CurrentUpdate();
+		{
+			FrameTimeline::Span duration("update", update);
+			ApplicationEvent::Dispatch (&applicationEvent);
+		}
+
+		renderEvent.type = RENDER_UPDATE;
+		{
+			FrameTimeline::Span duration("render_update", update);
+			RenderEvent::Dispatch (&renderEvent);
+		}
+
+		FrameTimeline::EndUpdate();
+		AndroidPerformanceHints::EndUpdate();
+
+		if (!lockRender) TryDispatchRender (framePeriod);
+
+	}
+
+
+	bool SDLApplication::TryDispatchRender (double periodMs) {
+
+		if (!active || inBackground || !OpenGLBindings::CanRender()) return false;
+
+		auto* thread = OpenGLBindings::renderThread;
+		if (OpenGLBindings::isMultiThreaded && thread && thread->IsRunning()) {
+			const int pending = RenderThread::activePendingFrames.load (std::memory_order_acquire);
+			// Starting a draw while a vsynced swap is pending can strand a
+			// synchronous GL request behind the previous presentation.
+			#ifdef IPHONE
+			// UIKit drives frames with a display link and exposes no swap interval.
+			const int pendingLimit = 1;
+			#else
+			const int pendingLimit = thread->CurrentSwapInterval () != 0
+				? 1 : RenderThread::MaxPendingFrames;
+			#endif
+			if (pending >= pendingLimit) {
+				FrameTimeline::RenderBlocked (pending);
+				if (lockRender && pendingLimit == 1) windowRedrawRequested = true;
+				return false;
+			}
+		}
+
+		windowRedrawRequested = false;
+		renderEvent.type = RENDER;
+		DispatchScheduledRender (&renderEvent, periodMs);
+		return true;
+
+	}
+
+
+	void SDLApplication::DispatchPendingRenderDeviceReset () {
+
+		if (!renderDeviceResetPending || inBackground || !OpenGLBindings::CanRender()) return;
+
+		renderDeviceResetPending = false;
+		renderEvent.type = RENDER_CONTEXT_RESTORED;
+		RenderEvent::Dispatch (&renderEvent);
+		renderEvent.type = RENDER;
+
+	}
+
+
 	void SDLApplication::HandleEvent (SDL_Event* event) {
-
-		#if defined(IPHONE) || defined(EMSCRIPTEN)
-
-		int top = 0;
-		gc_set_top_of_stack(&top,false);
-
-		#endif
 
 		switch (event->type) {
 
-			case SDL_USEREVENT:
-
-				if (!inBackground) {
-					if (!hrInit) {
-						perfFreq = SDL_GetPerformanceFrequency ();
-						lastPerfCounter = SDL_GetPerformanceCounter ();
-						periodPerfTicks = (uint64_t)(framePeriod * (double)perfFreq / 1000.0);
-						nextPerfCounter = lastPerfCounter + periodPerfTicks;
-						lastRenderPerfCounter = lastPerfCounter;
-						periodRenderPerfTicks = (uint64_t)(renderFramePeriod * (double)perfFreq / 1000.0);
-						nextRenderPerfCounter = lastRenderPerfCounter + periodRenderPerfTicks;
-						hrInit = true;
-					}
-
-					uint64_t nowPerf = SDL_GetPerformanceCounter ();
-
-					if (event->user.code == 0) { // Update
-						double realDeltaTime = (double)(nowPerf - lastPerfCounter) * 1000.0 / (double)perfFreq;
-						const double MAX_DELTA_TIME = 10 * framePeriod;
-						if (realDeltaTime < 0) realDeltaTime = 0;
-						if (realDeltaTime > MAX_DELTA_TIME) realDeltaTime = MAX_DELTA_TIME;
-						accumulator += realDeltaTime;
-
-						if (accumulator >= framePeriod) {
-							lastPerfCounter = nowPerf;
-							lastUpdate = (double)nowPerf * 1000.0 / (double)perfFreq;
-
-							applicationEvent.type = UPDATE;
-							applicationEvent.deltaTime = framePeriod;
-							ApplicationEvent::Dispatch (&applicationEvent);
-
-							renderEvent.type = RENDER_UPDATE;
-							RenderEvent::Dispatch (&renderEvent);
-
-							if (!lockRender) {
-								if (!OpenGLBindings::isMultiThreaded || !OpenGLBindings::renderThread || !OpenGLBindings::renderThread->IsRunning() || RenderThread::activePendingFrames < RenderThread::MaxPendingFrames) {
-									renderEvent.type = RENDER;
-									PerformanceMonitor::Instance().StartFrame();
-									RenderEvent::Dispatch (&renderEvent);
-								}
-							}
-
-							accumulator -= framePeriod;
-							if (accumulator > framePeriod * 2) accumulator = 0;
-						}
-
-					} else if (event->user.code == 1) { // Render
-						if (!lockRender) break;
-
-						if (OpenGLBindings::isMultiThreaded && OpenGLBindings::renderThread && OpenGLBindings::renderThread->IsRunning() && RenderThread::activePendingFrames >= RenderThread::MaxPendingFrames) {
-							RenderThread::hasPendingRenderRequest.exchange (true);
-							break;
-						}
-
-						if (lockRender) {
-							double realDeltaTime = (double)(nowPerf - lastRenderPerfCounter) * 1000.0 / (double)perfFreq;
-							const double MAX_DELTA_TIME = 10 * renderFramePeriod;
-							if (realDeltaTime < 0) realDeltaTime = 0;
-							if (realDeltaTime > MAX_DELTA_TIME) realDeltaTime = MAX_DELTA_TIME;
-							accumulatorRender += realDeltaTime;
-
-							if (accumulatorRender >= renderFramePeriod) {
-								lastRenderPerfCounter = nowPerf;
-
-								renderEvent.type = RENDER;
-								PerformanceMonitor::Instance().StartFrame();
-								RenderEvent::Dispatch (&renderEvent);
-
-								accumulatorRender -= renderFramePeriod;
-								if (accumulatorRender > renderFramePeriod * 2) accumulatorRender = 0;
-							}
-						}
-					}
-				}
-				
-				
-				break;
-
 			case SDL_APP_WILLENTERBACKGROUND:
 
+				AndroidPerformanceHints::SetForeground(false);
 				inBackground = true;
 				SDLWindow::PauseRendering();
 
@@ -328,12 +341,14 @@ namespace lime {
 				break;
 
 			case SDL_APP_DIDENTERFOREGROUND:
+				AndroidPerformanceHints::SetForeground(true);
 
 				SDLWindow::ResumeRendering();
 				windowEvent.type = WINDOW_ACTIVATE;
 				WindowEvent::Dispatch (&windowEvent);
 
 				inBackground = false;
+				ResetFrameDeadlines ();
 				break;
 
 			case SDL_CLIPBOARDUPDATE:
@@ -426,14 +441,10 @@ namespace lime {
 			case SDL_RENDER_DEVICE_RESET:
 
 				SDLWindow::OnRenderDeviceReset();
-
 				renderEvent.type = RENDER_CONTEXT_LOST;
 				RenderEvent::Dispatch (&renderEvent);
-
-				renderEvent.type = RENDER_CONTEXT_RESTORED;
-				RenderEvent::Dispatch (&renderEvent);
-
-				renderEvent.type = RENDER;
+				renderDeviceResetPending = true;
+				DispatchPendingRenderDeviceReset ();
 				break;
 			#endif
 
@@ -463,23 +474,14 @@ namespace lime {
 						break;
 
 					case SDL_WINDOWEVENT_EXPOSED:
-
-						ProcessWindowEvent (event);
-
-						if (!inBackground) {
-							RenderEvent::Dispatch (&renderEvent);
-						}
-
-						break;
-
 					case SDL_WINDOWEVENT_SIZE_CHANGED:
 
 						ProcessWindowEvent (event);
+						if (!inBackground) windowRedrawRequested = true;
+						break;
 
-						if (!inBackground) {
-							RenderEvent::Dispatch (&renderEvent);
-						}
-
+					case SDL_WINDOWEVENT_DISPLAY_CHANGED:
+						if (FrameTimeline::Now()) FrameTimeline::WindowGeometry(SDL_GetWindowFromID(event->window.windowID));
 						break;
 
 					case SDL_WINDOWEVENT_CLOSE:
@@ -517,20 +519,19 @@ namespace lime {
 	void SDLApplication::Init () {
 
 		active = true;
-		if (!hrInit) {
-			perfFreq = SDL_GetPerformanceFrequency ();
-			hrInit = true;
-		}
-		uint64_t now = SDL_GetPerformanceCounter ();
-		lastPerfCounter = now;
-		nextPerfCounter = now + periodPerfTicks;
-		lastRenderPerfCounter = now;
-		nextRenderPerfCounter = now + periodRenderPerfTicks;
-		
-		double nowMs = (double)now * 1000.0 / (double)perfFreq;
-		lastUpdate = nowMs;
-		currentUpdate = nowMs;
-		nextUpdate = nowMs + framePeriod;
+		ResetFrameDeadlines ();
+
+	}
+
+
+	void SDLApplication::ResetFrameDeadlines () {
+
+		if (!performanceFrequency) performanceFrequency = SDL_GetPerformanceFrequency ();
+		const auto now = SDL_GetPerformanceCounter ();
+		updatePeriodTicks = FramePeriodTicks (framePeriod, performanceFrequency);
+		renderPeriodTicks = FramePeriodTicks (renderFramePeriod, performanceFrequency);
+		nextUpdateCounter = now + updatePeriodTicks;
+		nextRenderCounter = now + renderPeriodTicks;
 
 	}
 
@@ -785,7 +786,39 @@ namespace lime {
 	}
 
 
+	#if defined(HX_ANDROID) || defined(IPHONE)
+	bool SDLApplication::SuppressTouchMouseEvent (const SDL_Event& event) {
+
+		Uint32 source;
+		switch (event.type) {
+			case SDL_MOUSEBUTTONDOWN:
+			case SDL_MOUSEBUTTONUP: source = event.button.which; break;
+			case SDL_MOUSEMOTION: source = event.motion.which; break;
+			case SDL_MOUSEWHEEL: source = event.wheel.which; break;
+			default: return false;
+		}
+		if (source != SDL_TOUCH_MOUSEID) return false;
+
+		const bool virtualPointer = SDL_GetHintBoolean ("SDL_NOVAFLARE_VIRTUAL_POINTER", SDL_FALSE) == SDL_TRUE;
+		if (event.type == SDL_MOUSEBUTTONDOWN) {
+			suppressedTouchMouseDown = virtualPointer;
+			return virtualPointer;
+		}
+
+		const bool suppress = virtualPointer || suppressedTouchMouseDown;
+		if (event.type == SDL_MOUSEBUTTONUP) {
+			if (virtualPointer && !suppressedTouchMouseDown) SDL_CaptureMouse (SDL_FALSE);
+			suppressedTouchMouseDown = false;
+		}
+		return suppress;
+	}
+	#endif
+
 	void SDLApplication::ProcessMouseEvent (SDL_Event* event) {
+
+		#if defined(HX_ANDROID) || defined(IPHONE)
+		if (SuppressTouchMouseEvent (*event)) return;
+		#endif
 
 		if (MouseEvent::callback) {
 
@@ -966,6 +999,23 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 
 
 	void SDLApplication::ProcessWindowEvent (SDL_Event* event) {
+		const auto timelineNow = FrameTimeline::Now();
+		if (timelineNow) {
+			const SDL_WindowEvent& window = event->window;
+			auto* nativeWindow = SDL_GetWindowFromID(window.windowID);
+			switch (window.event) {
+				case SDL_WINDOWEVENT_FOCUS_GAINED:
+				case SDL_WINDOWEVENT_FOCUS_LOST:
+					FrameTimeline::Write({"window_focus", 0, timelineNow, timelineNow,
+						window.event == SDL_WINDOWEVENT_FOCUS_GAINED ? 1u : 0u,
+						nativeWindow ? SDL_GetWindowFlags(nativeWindow) : 0u});
+					break;
+				case SDL_WINDOWEVENT_SIZE_CHANGED:
+					FrameTimeline::WindowGeometry(nativeWindow);
+					break;
+				default: break;
+			}
+		}
 
 		if (WindowEvent::callback) {
 
@@ -1013,6 +1063,9 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 		applicationEvent.type = EXIT;
 		ApplicationEvent::Dispatch (&applicationEvent);
 
+		AndroidPerformanceHints::SetForeground(false);
+		SDLWindow::StopRendering();
+		FrameTimeline::Flush();
 		SDL_QuitSubSystem (initFlags);
 
 		SDL_Quit ();
@@ -1033,52 +1086,30 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 
 	void SDLApplication::SetFrameRate (double frameRate) {
 
-		accumulator = 0.0;
 		#ifdef _WIN32
 		frameRate = FrameRateOverride ("NOVAFLARE_UPDATE_RATE", frameRate);
 		#endif
-
-		if (frameRate > 0) {
-
-			framePeriod = 1000.0 / frameRate;
-			if (perfFreq) periodPerfTicks = (uint64_t)(framePeriod * (double)perfFreq / 1000.0);
-
-		} else {
-
-			framePeriod = 1000.0;
-			if (perfFreq) periodPerfTicks = (uint64_t)(framePeriod * (double)perfFreq / 1000.0);
-
+		framePeriod = frameRate > 0 ? 1000.0 / frameRate : 1000.0;
+		if (performanceFrequency) {
+			updatePeriodTicks = FramePeriodTicks (framePeriod, performanceFrequency);
+			nextUpdateCounter = SDL_GetPerformanceCounter () + updatePeriodTicks;
 		}
-		if (perfFreq) {
-			lastPerfCounter = SDL_GetPerformanceCounter ();
-			nextPerfCounter = lastPerfCounter + periodPerfTicks;
-		}
+		TraceFrameSetting("update_period_ns", static_cast<std::uint64_t>(framePeriod * 1000000.0 + .5));
+
 	}
 
 
 	void SDLApplication::SetRenderFrameRate (double frameRate) {
 
-		accumulatorRender = 0.0;
 		#ifdef _WIN32
 		frameRate = FrameRateOverride ("NOVAFLARE_DRAW_RATE", frameRate);
 		#endif
-
-		if (frameRate > 0) {
-
-			renderFramePeriod = 1000.0 / frameRate;
-			if (perfFreq) periodRenderPerfTicks = (uint64_t)(renderFramePeriod * (double)perfFreq / 1000.0);
-
-		} else {
-
-			renderFramePeriod = 1000.0;
-			if (perfFreq) periodRenderPerfTicks = (uint64_t)(renderFramePeriod * (double)perfFreq / 1000.0);
-
+		renderFramePeriod = frameRate > 0 ? 1000.0 / frameRate : 1000.0;
+		if (performanceFrequency) {
+			renderPeriodTicks = FramePeriodTicks (renderFramePeriod, performanceFrequency);
+			nextRenderCounter = SDL_GetPerformanceCounter () + renderPeriodTicks;
 		}
-		if (perfFreq) {
-			lastRenderPerfCounter = SDL_GetPerformanceCounter ();
-			nextRenderPerfCounter = lastRenderPerfCounter +
-				periodRenderPerfTicks;
-		}
+		TraceFrameSetting("render_period_ns", static_cast<std::uint64_t>(renderFramePeriod * 1000000.0 + .5));
 
 	}
 
@@ -1093,141 +1124,59 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 		}
 		#endif
 		lockRender = split;
-		if (split) {
-			accumulatorRender = 0;
-			if (perfFreq) {
-				lastRenderPerfCounter = SDL_GetPerformanceCounter ();
-				nextRenderPerfCounter = lastRenderPerfCounter +
-					periodRenderPerfTicks;
-			}
-		}
-
-	}
-
-
-	static SDL_TimerID timerID = 0;
-	bool timerActive = false;
-	bool firstTime = true;
-
-	Uint32 OnTimer (Uint32 interval, void *) {
-
-		SDL_Event event;
-		SDL_UserEvent userevent;
-		userevent.type = SDL_USEREVENT;
-		userevent.code = 0;
-		userevent.data1 = NULL;
-		userevent.data2 = NULL;
-		event.type = SDL_USEREVENT;
-		event.user = userevent;
-
-		timerActive = false;
-		timerID = 0;
-
-		SDL_PushEvent (&event);
-
-		return 0;
+		TraceFrameSetting("split_render", split ? 1 : 0);
+		if (split && performanceFrequency) nextRenderCounter = SDL_GetPerformanceCounter () + renderPeriodTicks;
 
 	}
 
 
 	bool SDLApplication::Update () {
 
-		SDL_Event event;
-		event.type = -1;
-
-		#if (!defined (IPHONE) && !defined (EMSCRIPTEN))
-
-		if (active) {
-			if (firstTime) {
-				firstTime = false;
-			} else {
-				if (SDL_PollEvent (&event)) {
-					HandleEvent (&event);
-					event.type = -1;
-					if (!active)
-						return active;
-				}
-			}
-
+		#if defined(IPHONE) || defined(EMSCRIPTEN)
+		int stackTop = 0;
+		gc_set_top_of_stack (&stackTop, false);
 		#endif
 
+		if (!active) return false;
+
+		SDL_Event event;
 		while (SDL_PollEvent (&event)) {
-
 			HandleEvent (&event);
-			event.type = -1;
-			if (!active)
-				return active;
-
-		}
-		
-		if (!hrInit) {
-			perfFreq = SDL_GetPerformanceFrequency ();
-			lastPerfCounter = SDL_GetPerformanceCounter ();
-			periodPerfTicks = (uint64_t)(framePeriod * (double)perfFreq / 1000.0);
-			nextPerfCounter = lastPerfCounter + periodPerfTicks;
-			hrInit = true;
+			if (!active) return false;
 		}
 
-		uint64_t nowPerf = SDL_GetPerformanceCounter ();
-		double nowMs = (double)nowPerf * 1000.0 / (double)perfFreq;
-		currentUpdate = (Uint32)nowMs;
+		if (!performanceFrequency) ResetFrameDeadlines ();
+		if (!inBackground && !OpenGLBindings::CanRender()) SDLWindow::RetryContextRecovery();
+		DispatchPendingRenderDeviceReset ();
 
-		#if defined (IPHONE) || defined (EMSCRIPTEN)
-
-			if (nowMs >= nextUpdate) {
-
-				event.type = SDL_USEREVENT;
-				event.user.code = 0;
-				event.user.data1 = NULL;
-				event.user.data2 = NULL;
-				HandleEvent (&event);
-				event.type = -1;
-
-			}
-
-		#else
-			bool updatePending = (nowPerf >= nextPerfCounter);
-			bool renderPending = lockRender &&
-				(nowPerf >= nextRenderPerfCounter);
-
-			if (updatePending) {
-				SDL_Event ev;
-				ev.type = SDL_USEREVENT;
-				ev.user.code = 0;
-				ev.user.data1 = NULL;
-				ev.user.data2 = NULL;
-				
-				HandleEvent (&ev);
-				
-				nextPerfCounter += periodPerfTicks;
-				if (nextPerfCounter + periodPerfTicks < nowPerf) {
-					nextPerfCounter = nowPerf + periodPerfTicks;
-				}
-			}
-
-			if (renderPending) {
-				SDL_Event ev;
-				ev.type = SDL_USEREVENT;
-				ev.user.code = 1;
-				ev.user.data1 = NULL;
-				ev.user.data2 = NULL;
-				
-				HandleEvent (&ev);
-				
-				nextRenderPerfCounter += periodRenderPerfTicks;
-				if (nextRenderPerfCounter + periodRenderPerfTicks < nowPerf) {
-					nextRenderPerfCounter = nowPerf + periodRenderPerfTicks;
-				}
-			}
-
-			if (!updatePending && !renderPending) {
-				uint64_t nextEventCounter = lockRender &&
-					nextRenderPerfCounter < nextPerfCounter
-					? nextRenderPerfCounter : nextPerfCounter;
-				WaitForFrameDeadline (nextEventCounter, perfFreq);
-			}
+		auto now = SDL_GetPerformanceCounter ();
+		const bool updateDue = now >= nextUpdateCounter;
+		if (updateDue) {
+			// Publish the next deadline before callbacks so a rate change inside
+			// UPDATE or RENDER_UPDATE can replace it.
+			nextUpdateCounter += updatePeriodTicks;
+			// Allow one missed update to run on the next pass through the event loop.
+			if (now >= nextUpdateCounter && now - nextUpdateCounter >= updatePeriodTicks)
+				nextUpdateCounter = now + updatePeriodTicks;
+			if (!inBackground) DispatchScheduledUpdate ();
+			if (!active) return false;
+			now = SDL_GetPerformanceCounter ();
 		}
 
+		const bool renderDue = lockRender && now >= nextRenderCounter;
+		if (renderDue) {
+			nextRenderCounter = AdvanceFrameDeadline (nextRenderCounter, renderPeriodTicks, now);
+			TryDispatchRender (renderFramePeriod);
+		}
+
+		if (windowRedrawRequested && TryDispatchRender (lockRender ? renderFramePeriod : framePeriod)) return active;
+
+		#if !defined(IPHONE) && !defined(EMSCRIPTEN)
+		if (active && !updateDue && !renderDue) {
+			const auto deadline = lockRender && nextRenderCounter < nextUpdateCounter
+				? nextRenderCounter : nextUpdateCounter;
+			WaitForFrameDeadline (deadline, performanceFrequency);
+		}
 		#endif
 
 		return active;

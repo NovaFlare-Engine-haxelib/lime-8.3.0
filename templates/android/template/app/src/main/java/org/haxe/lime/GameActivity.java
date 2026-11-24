@@ -35,6 +35,12 @@ import java.util.List;
 
 public class GameActivity extends SDLActivity {
 
+	@Override
+	protected String[] getArguments() {
+		FramePerformanceHints.configureDiagnostics(this);
+		return super.getArguments();
+	}
+
 
 	private static AssetManager assetManager;
 	private static List<Extension> extensions;

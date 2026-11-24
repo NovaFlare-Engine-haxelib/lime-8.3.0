@@ -3,12 +3,64 @@
 #include <graphics/ImageBuffer.h>
 #include <system/System.h>
 #include <utils/Bytes.h>
+#include <memory>
 
 
 namespace lime {
 
 
-	bool PNG::Decode (Resource *resource, ImageBuffer *imageBuffer, bool decodeData) {
+	static int ReadPngStream (spng_ctx*, void *user, void *destination, size_t length) {
+
+		return lime::fread (destination, 1, length, (FILE_HANDLE*)user) == length ? SPNG_OK : SPNG_IO_EOF;
+
+	}
+
+
+	static bool CheckDecodeResult (int result, int expected, ImageDecodeScale& scale) {
+
+		if (result == SPNG_EMEM) scale.allocationFailed = true;
+		return result == expected;
+
+	}
+
+
+	static bool DecodeScaled (spng_ctx *ctx, ImageBuffer *imageBuffer, ImageDecodeScale& scale) {
+
+		size_t rowBytes = (size_t)scale.sourceWidth * 4;
+		std::unique_ptr<unsigned char, decltype (&free)> rows ((unsigned char*)malloc (rowBytes * 2), free);
+		if (!rows) {
+			scale.allocationFailed = true;
+			return false;
+		}
+
+		int result = spng_decode_image (ctx, NULL, 0, SPNG_FMT_RGBA8, SPNG_DECODE_TRNS | SPNG_DECODE_PROGRESSIVE);
+		if (!CheckDecodeResult (result, SPNG_OK, scale)) return false;
+
+		imageBuffer->Resize (scale.width, scale.height, 32);
+		if (!imageBuffer->data || !imageBuffer->data->buffer || !imageBuffer->data->buffer->b) {
+			scale.allocationFailed = true;
+			return false;
+		}
+		ScaleImageRows scaler (scale.sourceWidth, scale.sourceHeight, scale, imageBuffer->data->buffer->b);
+		unsigned char *current = rows.get ();
+		unsigned char *previous = current + rowBytes;
+
+		for (int row = 0; row < scale.sourceHeight; row++) {
+			result = spng_decode_row (ctx, current, rowBytes);
+			if (!CheckDecodeResult (result, row == scale.sourceHeight - 1 ? SPNG_EOI : SPNG_OK, scale)) return false;
+			scaler.Read (previous, current, row);
+			std::swap (current, previous);
+		}
+
+		imageBuffer->format = BGRA32;
+		imageBuffer->premultiplied = true;
+		imageBuffer->transparent = scaler.IsTransparent ();
+		return scaler.IsComplete ();
+
+	}
+
+
+	bool PNG::Decode (Resource *resource, ImageBuffer *imageBuffer, bool decodeData, ImageDecodeScale *scale) {
 
 		FILE_HANDLE* file = NULL;
 		Bytes* data = NULL;
@@ -21,6 +73,7 @@ namespace lime {
 
 		spng_ctx *ctx = spng_ctx_new (0);
 		if (!ctx) {
+			if (scale) scale->allocationFailed = true;
 			if (file) lime::fclose (file);
 			return false;
 		}
@@ -32,6 +85,10 @@ namespace lime {
 			if (file->isFile ()) {
 
 				result = spng_set_png_file (ctx, file->getFile ());
+
+			} else if (scale) {
+
+				result = spng_set_png_stream (ctx, ReadPngStream, file);
 
 			} else {
 
@@ -48,6 +105,7 @@ namespace lime {
 		}
 
 		if (result != SPNG_OK) {
+			if (scale && result == SPNG_EMEM) scale->allocationFailed = true;
 			spng_ctx_free (ctx);
 			if (file) lime::fclose (file);
 			if (data) delete data;
@@ -58,10 +116,23 @@ namespace lime {
 		result = spng_get_ihdr (ctx, &ihdr);
 
 		if (result != SPNG_OK) {
+			if (scale && result == SPNG_EMEM) scale->allocationFailed = true;
 			spng_ctx_free (ctx);
 			if (file) lime::fclose (file);
 			if (data) delete data;
 			return false;
+		}
+
+		if (scale) {
+
+			scale->pngRecognized = true;
+			bool decoded = decodeData && ihdr.interlace_method == 0 && scale->SetTarget (ihdr.width, ihdr.height)
+				&& DecodeScaled (ctx, imageBuffer, *scale);
+			spng_ctx_free (ctx);
+			if (file) lime::fclose (file);
+			if (data) delete data;
+			return decoded;
+
 		}
 
 		if (decodeData) {

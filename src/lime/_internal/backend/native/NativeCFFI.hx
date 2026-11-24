@@ -52,6 +52,34 @@ typedef CFFIPointer = Dynamic;
 #end
 class NativeCFFI
 {
+	#if (cpp && lime_cffi && !disable_cffi && !macro)
+	private static var queuePackedTextureImage2D:Dynamic;
+	private static var packedTextureUploadResolved = false;
+
+	@:noCompletion public static function tryQueuePackedTextureImage2D(image:Image, internalFormat:Int, format:Int):Bool
+	{
+		var data = image.data;
+		if (data == null || image.buffer.bitsPerPixel != 32 || image.buffer.stride != image.buffer.width * 4)
+			return false;
+
+		if (!packedTextureUploadResolved)
+		{
+			packedTextureUploadResolved = true;
+			try
+			{
+				queuePackedTextureImage2D = CFFI.load("lime", "lime_gl_queue_packed_texture_image_2d", -1);
+			}
+			catch (_:Dynamic)
+			{
+				queuePackedTextureImage2D = null;
+			}
+		}
+
+		return queuePackedTextureImage2D != null && queuePackedTextureImage2D(internalFormat, image.buffer.width, image.buffer.height,
+			format, data.buffer, data.byteOffset, data.byteLength) == true;
+	}
+	#end
+
 	#if (lime_cffi && !macro)
 	#if (cpp && !cppia)
 	#if (disable_cffi || haxe_ver < "3.4.0")
@@ -4095,6 +4123,8 @@ private static var lime_alc_capture_close_device = CFFI.load("lime", "lime_alc_c
 
 	@:cffi private static function lime_gl_get_tex_parameterfv(target:Int, pname:Int, params:DataPointer):Void;
 
+	@:cffi private static function lime_gl_get_tex_level_parameteri(target:Int, level:Int, pname:Int):Int;
+
 	@:cffi private static function lime_gl_get_tex_parameteri(target:Int, pname:Int):Int;
 
 	@:cffi private static function lime_gl_get_tex_parameteriv(target:Int, pname:Int, params:DataPointer):Void;
@@ -4578,6 +4608,7 @@ private static var lime_alc_capture_close_device = CFFI.load("lime", "lime_alc_c
 		false));
 	private static var lime_gl_get_tex_parameterfv = new cpp.Callable<Int->Int->lime.utils.DataPointer->cpp.Void>(cpp.Prime._loadPrime("lime",
 		"lime_gl_get_tex_parameterfv", "iidv", false));
+	private static var lime_gl_get_tex_level_parameteri = new cpp.Callable<Int->Int->Int->Int>(cpp.Prime._loadPrime("lime", "lime_gl_get_tex_level_parameteri", "iiii", true));
 	private static var lime_gl_get_tex_parameteri = new cpp.Callable<Int->Int->Int>(cpp.Prime._loadPrime("lime", "lime_gl_get_tex_parameteri", "iii", false));
 	private static var lime_gl_get_tex_parameteriv = new cpp.Callable<Int->Int->lime.utils.DataPointer->cpp.Void>(cpp.Prime._loadPrime("lime",
 		"lime_gl_get_tex_parameteriv", "iidv", false));

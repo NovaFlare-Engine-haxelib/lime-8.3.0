@@ -74,12 +74,21 @@ namespace lime {
 			static std::vector<SDLWindow*> windows;
 			static void PauseRendering();
 			static void ResumeRendering();
+			static void RetryContextRecovery();
+			static void StopRendering();
 			static void OnRenderDeviceReset();
 
 		private:
 
-			void SetGLContext (SDL_GLContext context);
+			bool InitializeOpenGL();
+			bool SetGLContext(SDL_GLContext context);
+			bool MakeGLContextCurrent();
+			bool ReleaseWorkerContext();
+			void SetContextRouting(bool directContextUsable, bool transferring);
+			void ResumeGLContext(SDL_GLContext restoredContext);
+			void TryRecoverGLContext();
 			SDL_GLContext context;
+			Uint64 nextContextRecoveryMS = 0;
 			int contextHeight;
 			int contextWidth;
 

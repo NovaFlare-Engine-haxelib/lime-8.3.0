@@ -1,14 +1,19 @@
 #include <system/CFFI.h>
 #include <system/CFFIPointer.h>
-#include <system/Mutex.h>
 #include <utils/Bytes.h>
 #include "OpenGL.h"
 #include "OpenGLBindings.h"
 #include <graphics/RenderThread.h>
 #include <thread>
 #include <map>
+#include <mutex>
+#include <memory>
+#include <utility>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
+#include <cstdio>
 
 #ifdef NEED_EXTENSIONS
 #define DEFINE_EXTENSION
@@ -54,191 +59,257 @@ namespace lime {
 	std::map<void*, void*> glObjectPtrs;
 	std::map<void*, GLObjectType> glObjectTypes;
 
-	std::vector<GLuint> gc_gl_id;
+	std::vector<std::pair<GLObjectType, GLuint>> gc_gl_ids;
 	std::vector<void*> gc_gl_ptr;
-	std::vector<GLObjectType> gc_gl_type;
-	Mutex gc_gl_mutex;
+	std::mutex gc_gl_mutex;
+	std::atomic<bool> gc_gl_pending {false};
 
+	namespace {
+		enum class ContextRouting { Direct, Worker, Unavailable };
+
+		ContextRouting contextRouting = ContextRouting::Worker;
+		bool contextTransferring = false;
+		bool multiThreadedRequested = true;
+		constexpr int contextSwitchTimeoutMS = 2000;
+
+		void ApplyContextRouting (ContextRouting routing) {
+			contextRouting = routing;
+			OpenGLBindings::isMultiThreaded = routing != ContextRouting::Direct;
+			if (auto* thread = OpenGLBindings::renderThread) {
+				thread->SetSubmissionEnabled (routing == ContextRouting::Worker);
+			}
+		}
+
+		template<typename Storage, typename Execute>
+		class GLCommandWithStorage {
+		public:
+			GLCommandWithStorage (Storage&& storage, Execute&& execute)
+				: storage (std::move (storage)), execute (std::move (execute)) {}
+
+			void operator() () { execute (storage); }
+
+		private:
+			Storage storage;
+			Execute execute;
+		};
+
+		template<typename Storage, typename Execute>
+		bool QueueGLCommand (Storage&& storage, Execute&& execute) {
+			return OpenGLBindings::renderThread->PushCommand (
+				GLCommandWithStorage<Storage, Execute> (std::move (storage), std::move (execute)));
+		}
+
+		template<typename Array, typename Deleter, typename Execute>
+		bool QueueGLBuffer (std::unique_ptr<Array, Deleter>&& buffer, Execute execute) {
+			return QueueGLCommand (std::move (buffer), [execute] (const std::unique_ptr<Array, Deleter>& storage) {
+				execute (storage.get ());
+			});
+		}
+
+		using GLBytes = std::unique_ptr<void, decltype (&std::free)>;
+
+		GLBytes CopyGLBytes (double address, int length) {
+			GLBytes copy (nullptr, std::free);
+			if (address == 0 || length <= 0) return copy;
+
+			copy.reset (std::malloc (length));
+			if (copy) memcpy (copy.get (), reinterpret_cast<const void*> (static_cast<uintptr_t> (address)), length);
+			else SDL_LogError (SDL_LOG_CATEGORY_RENDER, "Could not allocate %d bytes for a GL command", length);
+			return copy;
+		}
+
+		bool RemoveGLObjectID (void* object, GLObjectType type, GLuint id) {
+			glObjectIDs.erase (object);
+			auto& objects = glObjects[type];
+			auto entry = objects.find (id);
+			if (entry == objects.end () || entry->second != object) return false;
+			objects.erase (entry);
+			return true;
+		}
+
+		void* DeregisterGLObject (void* object) {
+			std::lock_guard<std::mutex> lock (gc_gl_mutex);
+			auto type = glObjectTypes.find (object);
+			auto id = glObjectIDs.find (object);
+			if (type != glObjectTypes.end () && id != glObjectIDs.end ()) {
+				RemoveGLObjectID (object, type->second, id->second);
+			}
+			glObjectTypes.erase (object);
+
+			auto pointer = glObjectPtrs.find (object);
+			if (pointer == glObjectPtrs.end ()) return nullptr;
+			void* handle = pointer->second;
+			glObjectPtrs.erase (pointer);
+			return handle;
+		}
+
+		void* FindGLObject (GLObjectType type, GLuint id) {
+			std::lock_guard<std::mutex> lock (gc_gl_mutex);
+			auto& objects = glObjects[type];
+			auto entry = objects.find (id);
+			return entry == objects.end () ? nullptr : entry->second;
+		}
+
+		void RegisterGLObject (void* object, GLObjectType type, GLuint id, void* handle) {
+			std::lock_guard<std::mutex> lock (gc_gl_mutex);
+			glObjects[type][id] = object;
+			glObjectIDs[object] = id;
+			glObjectPtrs[object] = handle;
+			glObjectTypes[object] = type;
+		}
+	}
 
 	void OpenGLBindings::BindRenderThread (RenderThread* thread) {
-        // Force recompile
 		renderThread = thread;
+	}
 
+	void OpenGLBindings::UnbindRenderThread (RenderThread* thread) {
+		if (!thread || renderThread != thread) return;
+		ApplyContextRouting (ContextRouting::Unavailable);
+		contextTransferring = false;
+		renderThread = nullptr;
+	}
+
+	bool OpenGLBindings::WantsMultiThreaded () {
+		return multiThreadedRequested;
+	}
+
+	bool OpenGLBindings::CanRender () {
+		return !renderThread || contextRouting != ContextRouting::Unavailable;
+	}
+
+	void OpenGLBindings::SetContextRouting (bool directContextUsable, bool transferring) {
+		contextTransferring = transferring;
+		if (directContextUsable) ApplyContextRouting (ContextRouting::Direct);
+		else ApplyContextRouting (transferring ? ContextRouting::Unavailable : ContextRouting::Worker);
 	}
 
 	void OpenGLBindings::SetMultiThreaded (bool enabled) {
+		multiThreadedRequested = enabled;
+		if (contextTransferring) return;
 
-		if (isMultiThreaded == enabled) return;
+		const auto requested = enabled ? ContextRouting::Worker : ContextRouting::Direct;
+		if (!renderThread) {
+			ApplyContextRouting (requested);
+			return;
+		}
+		if (!renderThread->IsRunning () || contextRouting == requested) return;
 
-		if (renderThread) {
-
-			if (!enabled) {
-
-				renderThread->Pause();
-				
-				if (renderThread->WaitForContext(false, 2000) && !renderThread->contextHeld.load(std::memory_order_acquire)) {
-					renderThread->MakeCurrent();
-					isMultiThreaded = false;
-				} else {
-					renderThread->Resume();
-				}
-
-			} else {
-
-				SDL_Window* window = SDL_GL_GetCurrentWindow();
-
-				if (window) {
-					SDL_GL_MakeCurrent(window, NULL);
-				}
-
-				isMultiThreaded = true;
-				renderThread->Resume();
-
+		if (!enabled) {
+			if (!renderThread->PauseAndReleaseContext (contextSwitchTimeoutMS)) {
+				SDL_LogError (SDL_LOG_CATEGORY_RENDER, "Timed out waiting for the GL render thread to release its context");
+				return;
 			}
-
-		} else {
-			
-			isMultiThreaded = enabled;
-
+			if (renderThread->MakeCurrent ()) {
+				ApplyContextRouting (ContextRouting::Direct);
+				return;
+			}
+			const bool workerRecovered = renderThread->ResumeAndAcquireContext (contextSwitchTimeoutMS);
+			ApplyContextRouting (workerRecovered ? ContextRouting::Worker : ContextRouting::Unavailable);
+			SDL_LogError (SDL_LOG_CATEGORY_RENDER, "Could not move the GL context to the application thread");
+			return;
 		}
 
+		auto* window = SDL_GL_GetCurrentWindow ();
+		if (window && SDL_GL_MakeCurrent (window, nullptr) < 0) {
+			SDL_LogError (SDL_LOG_CATEGORY_RENDER, "Could not release the application GL context: %s", SDL_GetError ());
+			return;
+		}
+		if (renderThread->ResumeAndAcquireContext (contextSwitchTimeoutMS)) {
+			ApplyContextRouting (ContextRouting::Worker);
+			return;
+		}
+		const bool directRecovered = renderThread->MakeCurrent ();
+		ApplyContextRouting (directRecovered ? ContextRouting::Direct : ContextRouting::Unavailable);
+		SDL_LogError (SDL_LOG_CATEGORY_RENDER, "Could not move the GL context to the render thread");
 	}
 
 
 	void gc_gl_object (value object) {
+		std::lock_guard<std::mutex> lock (gc_gl_mutex);
+		auto type = glObjectTypes.find (object);
+		if (type == glObjectTypes.end ()) return;
 
-		gc_gl_mutex.Lock ();
-
-		if (glObjectTypes.find (object) != glObjectTypes.end ()) {
-
-			GLObjectType type = glObjectTypes[object];
-
-			if (type != TYPE_SYNC) {
-
-				GLuint id = glObjectIDs[object];
-
-				gc_gl_id.push_back (id);
-				gc_gl_type.push_back (type);
-
-				glObjects[type].erase (id);
-				glObjectIDs.erase (object);
-				glObjectTypes.erase (object);
-
-			} else {
-
-				void* ptr = glObjectPtrs[object];
-
-				gc_gl_ptr.push_back (ptr);
-
-				glObjectPtrs.erase (object);
-				glObjectTypes.erase (object);
-
+		if (type->second == TYPE_SYNC) {
+			auto pointer = glObjectPtrs.find (object);
+			if (pointer != glObjectPtrs.end ()) {
+				gc_gl_ptr.push_back (pointer->second);
+				gc_gl_pending.store (true, std::memory_order_release);
 			}
-
+		} else {
+			auto id = glObjectIDs.find (object);
+			if (id != glObjectIDs.end ()) {
+				const GLuint resourceID = id->second;
+				if (RemoveGLObjectID (object, type->second, resourceID)) {
+					gc_gl_ids.emplace_back (type->second, resourceID);
+					gc_gl_pending.store (true, std::memory_order_release);
+				}
+			}
 		}
-
-		gc_gl_mutex.Unlock ();
-
+		glObjectPtrs.erase (object);
+		glObjectTypes.erase (type);
 	}
 
 
+	static void DeleteGLObject (GLObjectType type, GLuint id) {
+		switch (type) {
+			case TYPE_BUFFER:
+				if (glIsBuffer (id)) glDeleteBuffers (1, &id);
+				break;
+			case TYPE_FRAMEBUFFER:
+				if (glIsFramebuffer (id)) glDeleteFramebuffers (1, &id);
+				break;
+			case TYPE_PROGRAM:
+				if (glIsProgram (id)) glDeleteProgram (id);
+				break;
+			#ifdef LIME_GLES3_API
+			case TYPE_QUERY:
+				if (glIsQuery (id)) glDeleteQueries (1, &id);
+				break;
+			#endif
+			case TYPE_RENDERBUFFER:
+				if (glIsRenderbuffer (id)) glDeleteRenderbuffers (1, &id);
+				break;
+			#ifdef LIME_GLES3_API
+			case TYPE_SAMPLER:
+				if (glIsSampler (id)) glDeleteSamplers (1, &id);
+				break;
+			#endif
+			case TYPE_SHADER:
+				if (glIsShader (id)) glDeleteShader (id);
+				break;
+			case TYPE_TEXTURE:
+				if (glIsTexture (id)) glDeleteTextures (1, &id);
+				break;
+			#ifdef LIME_GLES3_API
+			case TYPE_VERTEX_ARRAY_OBJECT:
+				if (glIsVertexArray (id)) glDeleteVertexArrays (1, &id);
+				break;
+			#endif
+			default:
+				break;
+		}
+	}
+
 	void gc_gl_run () {
+		if (!gc_gl_pending.load (std::memory_order_acquire)) return;
 
-		if (gc_gl_id.size () > 0) {
-
-			gc_gl_mutex.Lock ();
-
-			int size = gc_gl_id.size ();
-
-			GLuint id;
-			GLObjectType type;
-
-			for (int i = 0; i < size; i++) {
-
-				id = gc_gl_id[i];
-				type = gc_gl_type[i];
-
-				switch (type) {
-
-					case TYPE_BUFFER:
-
-						if (glIsBuffer (id)) glDeleteBuffers (1, &id);
-						break;
-
-					case TYPE_FRAMEBUFFER:
-
-						if (glIsFramebuffer (id)) glDeleteFramebuffers (1, &id);
-						break;
-
-					case TYPE_PROGRAM:
-
-						if (glIsProgram (id)) glDeleteProgram (id);
-						break;
-
-					#ifdef LIME_GLES3_API
-					case TYPE_QUERY:
-
-						if (glIsQuery (id)) glDeleteQueries (1, &id);
-						break;
-					#endif
-
-					case TYPE_RENDERBUFFER:
-
-						if (glIsRenderbuffer (id)) glDeleteRenderbuffers (1, &id);
-						break;
-
-					#ifdef LIME_GLES3_API
-					case TYPE_SAMPLER:
-
-						if (glIsSampler (id)) glDeleteSamplers (1, &id);
-						break;
-					#endif
-
-					case TYPE_SHADER:
-
-						if (glIsShader (id)) glDeleteShader (id);
-						break;
-
-					case TYPE_TEXTURE:
-
-						if (glIsTexture (id)) glDeleteTextures (1, &id);
-						break;
-
-					#ifdef LIME_GLES3_API
-					case TYPE_VERTEX_ARRAY_OBJECT:
-
-						if (glIsVertexArray (id)) glDeleteVertexArrays (1, &id);
-						break;
-					#endif
-
-					default: break;
-
-				}
-
-			}
-
-			size = gc_gl_ptr.size ();
-			void* ptr;
-
-			for (int i = 0; i < size; i++) {
-
-				ptr = gc_gl_ptr[i];
-				//type = gc_gl_type[i];
-
-				#ifdef LIME_GLES3_API
-				if (glIsSync ((GLsync)ptr)) glDeleteSync ((GLsync)ptr);
-				#endif
-
-			}
-
-			gc_gl_id.clear ();
-			gc_gl_ptr.clear ();
-			gc_gl_type.clear ();
-
-			gc_gl_mutex.Unlock ();
-
+		std::vector<std::pair<GLObjectType, GLuint>> pendingIDs;
+		std::vector<void*> pendingPointers;
+		{
+			std::lock_guard<std::mutex> lock (gc_gl_mutex);
+			pendingIDs.swap (gc_gl_ids);
+			pendingPointers.swap (gc_gl_ptr);
+			gc_gl_pending.store (false, std::memory_order_release);
 		}
 
+		for (const auto& resource : pendingIDs) DeleteGLObject (resource.first, resource.second);
+		#ifdef LIME_GLES3_API
+		for (auto* pointer : pendingPointers) {
+			auto sync = static_cast<GLsync> (pointer);
+			if (glIsSync (sync)) glDeleteSync (sync);
+		}
+		#endif
 	}
 
 
@@ -254,6 +325,8 @@ namespace lime {
 	void lime_gl_active_texture (int texture) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			// Unit zero is valid without querying the context's texture-unit limit.
+			if (!OpenGLBindings::renderThread->RecordActiveTexture (texture == GL_TEXTURE0)) return;
 			OpenGLBindings::renderThread->PushCommand ([=] () {
 				glActiveTexture (texture);
 			});
@@ -266,13 +339,7 @@ namespace lime {
 
 	HL_PRIM void HL_NAME(hl_gl_active_texture) (int texture) {
 
-		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->PushCommand ([=] () {
-				glActiveTexture (texture);
-			});
-		} else {
-			glActiveTexture (texture);
-		}
+		lime_gl_active_texture (texture);
 
 	}
 
@@ -280,7 +347,7 @@ namespace lime {
 	void lime_gl_attach_shader (int program, int shader) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glAttachShader (program, shader);
 			});
 		} else {
@@ -768,15 +835,11 @@ namespace lime {
 	void lime_gl_buffer_data (int target, int size, double data, int usage) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			void* dataCopy = nullptr;
-			if (data != 0) {
-				dataCopy = malloc(size);
-				memcpy(dataCopy, (void*)(uintptr_t)data, size);
-			}
+			auto dataCopy = CopyGLBytes (data, size);
+			if (data != 0 && size > 0 && !dataCopy) return;
 
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const void* dataCopy) {
 				glBufferData (target, size, dataCopy, usage);
-				if (dataCopy) free(dataCopy);
 			});
 		} else {
 			glBufferData (target, size, (void*)(uintptr_t)data, usage);
@@ -788,15 +851,11 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_buffer_data) (int target, int size, double data, int usage) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			void* dataCopy = nullptr;
-			if (data != 0) {
-				dataCopy = malloc(size);
-				memcpy(dataCopy, (void*)(uintptr_t)data, size);
-			}
+			auto dataCopy = CopyGLBytes (data, size);
+			if (data != 0 && size > 0 && !dataCopy) return;
 
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const void* dataCopy) {
 				glBufferData (target, size, dataCopy, usage);
-				if (dataCopy) free(dataCopy);
 			});
 		} else {
 			glBufferData (target, size, (void*)(uintptr_t)data, usage);
@@ -808,15 +867,11 @@ namespace lime {
 	void lime_gl_buffer_sub_data (int target, int offset, int size, double data) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			void* dataCopy = nullptr;
-			if (data != 0) {
-				dataCopy = malloc(size);
-				memcpy(dataCopy, (void*)(uintptr_t)data, size);
-			}
+			auto dataCopy = CopyGLBytes (data, size);
+			if (data != 0 && size > 0 && !dataCopy) return;
 
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const void* dataCopy) {
 				glBufferSubData (target, offset, size, dataCopy);
-				if (dataCopy) free(dataCopy);
 			});
 		} else {
 			glBufferSubData (target, offset, size, (void*)(uintptr_t)data);
@@ -828,15 +883,11 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_buffer_sub_data) (int target, int offset, int size, double data) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			void* dataCopy = nullptr;
-			if (data != 0) {
-				dataCopy = malloc(size);
-				memcpy(dataCopy, (void*)(uintptr_t)data, size);
-			}
+			auto dataCopy = CopyGLBytes (data, size);
+			if (data != 0 && size > 0 && !dataCopy) return;
 
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const void* dataCopy) {
 				glBufferSubData (target, offset, size, dataCopy);
-				if (dataCopy) free(dataCopy);
 			});
 		} else {
 			glBufferSubData (target, offset, size, (void*)(uintptr_t)data);
@@ -848,7 +899,7 @@ namespace lime {
 	int lime_gl_check_framebuffer_status (int target) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, [=] () {
 				return glCheckFramebufferStatus (target);
 			});
 		} else {
@@ -861,7 +912,7 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_check_framebuffer_status) (int target) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, [=] () {
 				return glCheckFramebufferStatus (target);
 			});
 		} else {
@@ -929,12 +980,11 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			GLfloat* dataCopy = new GLfloat[4];
-			memcpy(dataCopy, (void*)(uintptr_t)data, 4 * sizeof(GLfloat));
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[4]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)data, 4 * sizeof(GLfloat));
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glClearBufferfv (buffer, drawBuffer, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glClearBufferfv (buffer, drawBuffer, (GLfloat*)(uintptr_t)data);
@@ -957,12 +1007,11 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			GLint* dataCopy = new GLint[4];
-			memcpy(dataCopy, (void*)(uintptr_t)data, 4 * sizeof(GLint));
+			std::unique_ptr<GLint[]> dataCopy (new GLint[4]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)data, 4 * sizeof(GLint));
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLint* dataCopy) {
 				glClearBufferiv (buffer, drawBuffer, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glClearBufferiv (buffer, drawBuffer, (GLint*)(uintptr_t)data);
@@ -985,12 +1034,11 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			GLuint* dataCopy = new GLuint[4];
-			memcpy(dataCopy, (void*)(uintptr_t)data, 4 * sizeof(GLuint));
+			std::unique_ptr<GLuint[]> dataCopy (new GLuint[4]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)data, 4 * sizeof(GLuint));
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLuint* dataCopy) {
 				glClearBufferuiv (buffer, drawBuffer, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glClearBufferuiv (buffer, drawBuffer, (GLuint*)(uintptr_t)data);
@@ -1119,7 +1167,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [=] () {
 				GLuint64 timeout = (GLuint64) timeoutA << 32 | timeoutB;
 				return glClientWaitSync ((GLsync)sync->ptr, flags, timeout);
 			});
@@ -1163,7 +1211,7 @@ namespace lime {
 	void lime_gl_compile_shader (int shader) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glCompileShader (shader);
 				GLint status;
 				glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
@@ -1189,7 +1237,7 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_compile_shader) (int shader) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glCompileShader (shader);
 				GLint status;
 				glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
@@ -1214,12 +1262,11 @@ namespace lime {
 	void lime_gl_compressed_tex_image_2d (int target, int level, int internalformat, int width, int height, int border, int imageSize, double data) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			void* dataCopy = malloc(imageSize);
-			memcpy(dataCopy, (void*)(uintptr_t)data, imageSize);
+			auto dataCopy = CopyGLBytes (data, imageSize);
+			if (data != 0 && imageSize > 0 && !dataCopy) return;
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const void* dataCopy) {
 				glCompressedTexImage2D (target, level, internalformat, width, height, border, imageSize, dataCopy);
-				free(dataCopy);
 			});
 		} else {
 			glCompressedTexImage2D (target, level, internalformat, width, height, border, imageSize, (void*)(uintptr_t)data);
@@ -1231,12 +1278,11 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_compressed_tex_image_2d) (int target, int level, int internalformat, int width, int height, int border, int imageSize, double data) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			void* dataCopy = malloc(imageSize);
-			memcpy(dataCopy, (void*)(uintptr_t)data, imageSize);
+			auto dataCopy = CopyGLBytes (data, imageSize);
+			if (data != 0 && imageSize > 0 && !dataCopy) return;
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const void* dataCopy) {
 				glCompressedTexImage2D (target, level, internalformat, width, height, border, imageSize, dataCopy);
-				free(dataCopy);
 			});
 		} else {
 			glCompressedTexImage2D (target, level, internalformat, width, height, border, imageSize, (void*)(uintptr_t)data);
@@ -1249,12 +1295,11 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			void* dataCopy = malloc(imageSize);
-			memcpy(dataCopy, (void*)(uintptr_t)data, imageSize);
+			auto dataCopy = CopyGLBytes (data, imageSize);
+			if (data != 0 && imageSize > 0 && !dataCopy) return;
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const void* dataCopy) {
 				glCompressedTexImage3D (target, level, internalformat, width, height, depth, border, imageSize, dataCopy);
-				free(dataCopy);
 			});
 		} else {
 			glCompressedTexImage3D (target, level, internalformat, width, height, depth, border, imageSize, (void*)(uintptr_t)data);
@@ -1268,12 +1313,11 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			void* dataCopy = malloc(imageSize);
-			memcpy(dataCopy, (void*)(uintptr_t)data, imageSize);
+			auto dataCopy = CopyGLBytes (data, imageSize);
+			if (data != 0 && imageSize > 0 && !dataCopy) return;
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const void* dataCopy) {
 				glCompressedTexImage3D (target, level, internalformat, width, height, depth, border, imageSize, dataCopy);
-				free(dataCopy);
 			});
 		} else {
 			glCompressedTexImage3D (target, level, internalformat, width, height, depth, border, imageSize, (void*)(uintptr_t)data);
@@ -1286,12 +1330,11 @@ namespace lime {
 	void lime_gl_compressed_tex_sub_image_2d (int target, int level, int xoffset, int yoffset, int width, int height, int format, int imageSize, double data) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			void* dataCopy = malloc(imageSize);
-			memcpy(dataCopy, (void*)(uintptr_t)data, imageSize);
+			auto dataCopy = CopyGLBytes (data, imageSize);
+			if (data != 0 && imageSize > 0 && !dataCopy) return;
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const void* dataCopy) {
 				glCompressedTexSubImage2D (target, level, xoffset, yoffset, width, height, format, imageSize, dataCopy);
-				free(dataCopy);
 			});
 		} else {
 			glCompressedTexSubImage2D (target, level, xoffset, yoffset, width, height, format, imageSize, (void*)(uintptr_t)data);
@@ -1303,12 +1346,11 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_compressed_tex_sub_image_2d) (int target, int level, int xoffset, int yoffset, int width, int height, int format, int imageSize, double data) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			void* dataCopy = malloc(imageSize);
-			memcpy(dataCopy, (void*)(uintptr_t)data, imageSize);
+			auto dataCopy = CopyGLBytes (data, imageSize);
+			if (data != 0 && imageSize > 0 && !dataCopy) return;
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const void* dataCopy) {
 				glCompressedTexSubImage2D (target, level, xoffset, yoffset, width, height, format, imageSize, dataCopy);
-				free(dataCopy);
 			});
 		} else {
 			glCompressedTexSubImage2D (target, level, xoffset, yoffset, width, height, format, imageSize, (void*)(uintptr_t)data);
@@ -1321,12 +1363,11 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			void* dataCopy = malloc(imageSize);
-			memcpy(dataCopy, (void*)(uintptr_t)data, imageSize);
+			auto dataCopy = CopyGLBytes (data, imageSize);
+			if (data != 0 && imageSize > 0 && !dataCopy) return;
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const void* dataCopy) {
 				glCompressedTexSubImage3D (target, level, xoffset, yoffset, zoffset, width, height, depth, format, imageSize, dataCopy);
-				free(dataCopy);
 			});
 		} else {
 			glCompressedTexSubImage3D (target, level, xoffset, yoffset, zoffset, width, height, depth, format, imageSize, (void*)(uintptr_t)data);
@@ -1340,12 +1381,11 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			void* dataCopy = malloc(imageSize);
-			memcpy(dataCopy, (void*)(uintptr_t)data, imageSize);
+			auto dataCopy = CopyGLBytes (data, imageSize);
+			if (data != 0 && imageSize > 0 && !dataCopy) return;
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const void* dataCopy) {
 				glCompressedTexSubImage3D (target, level, xoffset, yoffset, zoffset, width, height, depth, format, imageSize, dataCopy);
-				free(dataCopy);
 			});
 		} else {
 			glCompressedTexSubImage3D (target, level, xoffset, yoffset, zoffset, width, height, depth, format, imageSize, (void*)(uintptr_t)data);
@@ -1470,7 +1510,7 @@ namespace lime {
 	int lime_gl_create_buffer () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [] () {
 				GLuint id = 0;
 				glGenBuffers (1, &id);
 				return id;
@@ -1487,7 +1527,7 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_create_buffer) () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [] () {
 				GLuint id = 0;
 				glGenBuffers (1, &id);
 				return id;
@@ -1504,7 +1544,7 @@ namespace lime {
 	int lime_gl_create_framebuffer () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [] () {
 				GLuint id = 0;
 				glGenFramebuffers (1, &id);
 				return id;
@@ -1521,7 +1561,7 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_create_framebuffer) () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [] () {
 				GLuint id = 0;
 				glGenFramebuffers (1, &id);
 				return id;
@@ -1538,7 +1578,7 @@ namespace lime {
 	int lime_gl_create_program () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [] () {
 				int pid = glCreateProgram ();
 				//printf("[GL] glCreateProgram: %d\n", pid);
 				return pid;
@@ -1553,7 +1593,7 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_create_program) () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [] () {
 				return glCreateProgram ();
 			});
 		} else {
@@ -1566,7 +1606,7 @@ namespace lime {
 	int lime_gl_create_query () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [] () {
 				GLuint id = 0;
 				#ifdef LIME_GLES3_API
 				glGenQueries (1, &id);
@@ -1587,7 +1627,7 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_create_query) () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [] () {
 				GLuint id = 0;
 				#ifdef LIME_GLES3_API
 				glGenQueries (1, &id);
@@ -1608,7 +1648,7 @@ namespace lime {
 	int lime_gl_create_renderbuffer () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [] () {
 				GLuint id = 0;
 				glGenRenderbuffers (1, &id);
 				return id;
@@ -1625,7 +1665,7 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_create_renderbuffer) () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [] () {
 				GLuint id = 0;
 				glGenRenderbuffers (1, &id);
 				return id;
@@ -1642,7 +1682,7 @@ namespace lime {
 	int lime_gl_create_sampler () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [] () {
 				GLuint id = 0;
 				#ifdef LIME_GLES3_API
 				glGenSamplers (1, &id);
@@ -1663,7 +1703,7 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_create_sampler) () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [] () {
 				GLuint id = 0;
 				#ifdef LIME_GLES3_API
 				glGenSamplers (1, &id);
@@ -1684,7 +1724,7 @@ namespace lime {
 	int lime_gl_create_shader (int type) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [=] () {
 				return glCreateShader (type);
 			});
 		} else {
@@ -1697,7 +1737,7 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_create_shader) (int type) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [=] () {
 				return glCreateShader (type);
 			});
 		} else {
@@ -1710,7 +1750,7 @@ namespace lime {
 	int lime_gl_create_texture () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [] () {
 				GLuint id = 0;
 				glGenTextures (1, &id);
 				return id;
@@ -1727,7 +1767,7 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_create_texture) () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [] () {
 				GLuint id = 0;
 				glGenTextures (1, &id);
 				return id;
@@ -1744,7 +1784,7 @@ namespace lime {
 	int lime_gl_create_transform_feedback () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [] () {
 				GLuint id = 0;
 				#ifdef LIME_GLES3_API
 				glGenTransformFeedbacks (1, &id);
@@ -1765,7 +1805,7 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_create_transform_feedback) () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [] () {
 				GLuint id = 0;
 				#ifdef LIME_GLES3_API
 				glGenTransformFeedbacks (1, &id);
@@ -1786,7 +1826,7 @@ namespace lime {
 	int lime_gl_create_vertex_array () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [] () {
 				GLuint id = 0;
 				#ifdef LIME_GLES3_API
 				glGenVertexArrays (1, &id);
@@ -1807,7 +1847,7 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_create_vertex_array) () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int> ([] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int> (__func__, [] () {
 				GLuint id = 0;
 				#ifdef LIME_GLES3_API
 				glGenVertexArrays (1, &id);
@@ -2045,6 +2085,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (val_is_null (sync)) return;
+		if (!DeregisterGLObject (sync)) return;
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			GLsync s = (GLsync)val_data (sync);
 			OpenGLBindings::renderThread->PushCommand ([=] () {
@@ -2062,6 +2103,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (!sync) return;
+		if (!DeregisterGLObject (sync)) return;
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			GLsync s = (GLsync)sync->ptr;
 			OpenGLBindings::renderThread->PushCommand ([=] () {
@@ -2393,7 +2435,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		GLsizei size = val_array_size (buffers);
-		GLenum *dataCopy = new GLenum[size];
+		std::unique_ptr<GLenum[]> dataCopy (new GLenum[size]);
 
 		for (int i = 0; i < size; i++) {
 
@@ -2402,13 +2444,11 @@ namespace lime {
 		}
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLenum* dataCopy) {
 				glDrawBuffers (size, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
-			glDrawBuffers (size, dataCopy);
-			delete[] dataCopy;
+			glDrawBuffers (size, dataCopy.get ());
 		}
 		#endif
 
@@ -2420,12 +2460,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			GLsizei size = buffers->size;
-			GLenum* dataCopy = new GLenum[size];
-			memcpy(dataCopy, (GLenum*)hl_aptr (buffers, int), size * sizeof(GLenum));
+			std::unique_ptr<GLenum[]> dataCopy (new GLenum[size]);
+			memcpy(dataCopy.get (), (GLenum*)hl_aptr (buffers, int), size * sizeof(GLenum));
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLenum* dataCopy) {
 				glDrawBuffers (size, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			GLsizei size = buffers->size;
@@ -2634,56 +2673,53 @@ namespace lime {
 	}
 
 
-	value lime_gl_fence_sync (int condition, int flags) {
+	#ifdef LIME_GLES3_API
+	static void RegisterSync (void* handle, GLsync sync) {
+		std::lock_guard<std::mutex> lock (gc_gl_mutex);
+		glObjectPtrs[handle] = sync;
+		glObjectTypes[handle] = TYPE_SYNC;
+	}
 
-		#ifdef LIME_GLES3_API
+	static GLsync CreateSync (const char* operation, int condition, int flags) {
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<value>([=] () {
-				GLsync result = glFenceSync (condition, flags);
-				value handle = CFFIPointer (result, gc_gl_object);
-				glObjectPtrs[handle] = result;
-				return handle;
+			return OpenGLBindings::renderThread->RunCommandAndWait<GLsync> (operation, [=] () {
+				return glFenceSync (condition, flags);
 			});
-		} else {
-			GLsync result = glFenceSync (condition, flags);
+		}
+		return glFenceSync (condition, flags);
+	}
+	#endif
+
+	value lime_gl_fence_sync (int condition, int flags) {
+		#ifdef LIME_GLES3_API
+		GLsync result = CreateSync (__func__, condition, flags);
+		if (result) {
 			value handle = CFFIPointer (result, gc_gl_object);
-			glObjectPtrs[handle] = result;
+			RegisterSync (handle, result);
 			return handle;
 		}
-		#else
-		return alloc_null ();
 		#endif
-
+		return alloc_null ();
 	}
 
 
 	HL_PRIM HL_CFFIPointer* HL_NAME(hl_gl_fence_sync) (int condition, int flags) {
-
 		#ifdef LIME_GLES3_API
-		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<HL_CFFIPointer*>([=] () {
-				GLsync result = glFenceSync (condition, flags);
-				HL_CFFIPointer* handle = HLCFFIPointer (result, (hl_finalizer)gc_gl_object);
-				glObjectPtrs[handle] = result;
-				return handle;
-			});
-		} else {
-			GLsync result = glFenceSync (condition, flags);
-			HL_CFFIPointer* handle = HLCFFIPointer (result, (hl_finalizer)gc_gl_object);
-			glObjectPtrs[handle] = result;
+		GLsync result = CreateSync (__func__, condition, flags);
+		if (result) {
+			auto* handle = HLCFFIPointer (result, (hl_finalizer)gc_gl_object);
+			RegisterSync (handle, result);
 			return handle;
 		}
-		#else
-		return NULL;
 		#endif
-
+		return nullptr;
 	}
 
 
 	void lime_gl_finish () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glFinish ();
 			});
 		} else {
@@ -2696,7 +2732,7 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_finish) () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glFinish ();
 			});
 		} else {
@@ -2875,7 +2911,7 @@ namespace lime {
 				std::string name;
 			};
 
-			AttribInfo info = OpenGLBindings::renderThread->RunCommandAndWait<AttribInfo>([=] () {
+			AttribInfo info = OpenGLBindings::renderThread->RunCommandAndWait<AttribInfo>(__func__, [=] () {
 				std::string buffer (GL_ACTIVE_ATTRIBUTE_MAX_LENGTH, 0);
 				GLsizei outLen = 0;
 				GLsizei size = 0;
@@ -2924,7 +2960,7 @@ namespace lime {
 				std::string name;
 			};
 
-			AttribInfo info = OpenGLBindings::renderThread->RunCommandAndWait<AttribInfo>([=] () {
+			AttribInfo info = OpenGLBindings::renderThread->RunCommandAndWait<AttribInfo>(__func__, [=] () {
 				std::string buffer (GL_ACTIVE_ATTRIBUTE_MAX_LENGTH, 0);
 				GLsizei outLen = 0;
 				GLsizei size = 0;
@@ -2986,7 +3022,7 @@ namespace lime {
 				std::string name;
 			};
 
-			UniformInfo info = OpenGLBindings::renderThread->RunCommandAndWait<UniformInfo>([=] () {
+			UniformInfo info = OpenGLBindings::renderThread->RunCommandAndWait<UniformInfo>(__func__, [=] () {
 				std::string buffer (GL_ACTIVE_UNIFORM_MAX_LENGTH, 0);
 				GLsizei outLen = 0;
 				GLsizei size = 0;
@@ -3033,7 +3069,7 @@ namespace lime {
 				std::string name;
 			};
 
-			UniformInfo info = OpenGLBindings::renderThread->RunCommandAndWait<UniformInfo>([=] () {
+			UniformInfo info = OpenGLBindings::renderThread->RunCommandAndWait<UniformInfo>(__func__, [=] () {
 				std::string buffer (GL_ACTIVE_UNIFORM_MAX_LENGTH, 0);
 				GLsizei outLen = 0;
 				GLsizei size = 0;
@@ -3089,7 +3125,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, [=] () {
 				GLint param = 0;
 				glGetActiveUniformBlockiv (program, uniformBlockIndex, pname, &param);
 				return (int)param;
@@ -3110,7 +3146,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, [=] () {
 				GLint param = 0;
 				glGetActiveUniformBlockiv (program, uniformBlockIndex, pname, &param);
 				return (int)param;
@@ -3131,7 +3167,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetActiveUniformBlockiv (program, uniformBlockIndex, pname, (GLint*)(uintptr_t)params);
 			});
 		} else {
@@ -3146,7 +3182,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetActiveUniformBlockiv (program, uniformBlockIndex, pname, (GLint*)(uintptr_t)params);
 			});
 		} else {
@@ -3158,33 +3194,23 @@ namespace lime {
 
 
 	value lime_gl_get_active_uniform_block_name (int program, int uniformBlockIndex) {
-
 		#ifdef LIME_GLES3_API
-		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<value>([=] () {
-				GLint length;
-				glGetActiveUniformBlockiv (program, uniformBlockIndex, GL_UNIFORM_BLOCK_NAME_LENGTH, &length);
-
-				std::string buffer (length, 0);
-
-				glGetActiveUniformBlockName (program, uniformBlockIndex, length, 0, &buffer[0]);
-
-				return alloc_string (buffer.c_str ());
-			});
-		} else {
-			GLint length;
+		auto readName = [=] () {
+			GLint length = 0;
 			glGetActiveUniformBlockiv (program, uniformBlockIndex, GL_UNIFORM_BLOCK_NAME_LENGTH, &length);
+			if (length <= 0) return std::string ();
 
-			std::string buffer (length, 0);
-
-			glGetActiveUniformBlockName (program, uniformBlockIndex, length, 0, &buffer[0]);
-
-			return alloc_string (buffer.c_str ());
-		}
+			std::string name (length, '\0');
+			glGetActiveUniformBlockName (program, uniformBlockIndex, length, nullptr, &name[0]);
+			return name;
+		};
+		auto name = OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded
+			? OpenGLBindings::renderThread->RunCommandAndWait<std::string> (__func__, readName)
+			: readName ();
+		return alloc_string (name.c_str ());
 		#else
 		return alloc_null ();
 		#endif
-
 	}
 
 
@@ -3230,13 +3256,12 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			GLsizei size = uniformIndices->size;
-			GLenum *indicesCopy = new GLenum[size];
+			std::unique_ptr<GLenum[]> indicesCopy (new GLenum[size]);
 			GLenum *src = (GLenum*)hl_aptr (uniformIndices, int);
 			for(int i=0; i<size; i++) indicesCopy[i] = src[i];
 
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
-				glGetActiveUniformsiv (program, size, indicesCopy, pname, (GLint*)(uintptr_t)params);
-				delete[] indicesCopy;
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [&] () {
+				glGetActiveUniformsiv (program, size, indicesCopy.get (), pname, (GLint*)(uintptr_t)params);
 			});
 		} else {
 			GLsizei size = uniformIndices->size;
@@ -3302,9 +3327,9 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			std::string nameStr(name.__s);
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWaitOr<int>(__func__, [=] () {
 				return glGetAttribLocation (program, nameStr.c_str());
-			});
+			}, -1);
 		} else {
 			return glGetAttribLocation (program, name.__s);
 		}
@@ -3316,9 +3341,9 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			std::string nameStr = name ? (char*)hl_to_utf8(name->bytes) : "";
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWaitOr<int>(__func__, [=] () {
 				return glGetAttribLocation (program, nameStr.c_str());
-			});
+			}, -1);
 		} else {
 			return glGetAttribLocation (program, name ? (char*)hl_to_utf8 (name->bytes) : NULL);
 		}
@@ -3329,7 +3354,7 @@ namespace lime {
 	bool lime_gl_get_boolean (int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<bool>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<bool>(__func__, [=] () {
 				GLboolean params = 0;
 				glGetBooleanv (pname, &params);
 				return (bool)params;
@@ -3346,7 +3371,7 @@ namespace lime {
 	HL_PRIM bool HL_NAME(hl_gl_get_boolean) (int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<bool>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<bool>(__func__, [=] () {
 				unsigned char params;
 				glGetBooleanv (pname, &params);
 				return params;
@@ -3363,7 +3388,7 @@ namespace lime {
 	void lime_gl_get_booleanv (int pname, double params) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetBooleanv (pname, (GLboolean*)(uintptr_t)params);
 			});
 		} else {
@@ -3376,7 +3401,7 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_get_booleanv) (int pname, double params) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetBooleanv (pname, (GLboolean*)(uintptr_t)params);
 			});
 		} else {
@@ -3388,26 +3413,21 @@ namespace lime {
 
 	int lime_gl_get_buffer_parameteri (int target, int index) {
 
-		GLint params = 0;
-		glGetBufferParameteriv (target, index, &params);
-		return params;
+		auto query = [=] () {
+			GLint params = 0;
+			glGetBufferParameteriv (target, index, &params);
+			return params;
+		};
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded)
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, query);
+		return query();
 
 	}
 
 
 	HL_PRIM int HL_NAME(hl_gl_get_buffer_parameteri) (int target, int index) {
 
-		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
-				GLint params = 0;
-				glGetBufferParameteriv (target, index, &params);
-				return params;
-			});
-		} else {
-			GLint params = 0;
-			glGetBufferParameteriv (target, index, &params);
-			return params;
-		}
+		return lime_gl_get_buffer_parameteri (target, index);
 
 	}
 
@@ -3415,7 +3435,13 @@ namespace lime {
 	void lime_gl_get_buffer_parameteri64v (int target, int index, double params) {
 
 		#ifdef LIME_GLES3_API
-		glGetBufferParameteri64v (target, index, (GLint64*)(uintptr_t)params);
+		auto query = [=] () {
+			glGetBufferParameteri64v (target, index, (GLint64*)(uintptr_t)params);
+		};
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded)
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, query);
+		else
+			query();
 		#endif
 
 	}
@@ -3423,29 +3449,27 @@ namespace lime {
 
 	HL_PRIM void HL_NAME(hl_gl_get_buffer_parameteri64v) (int target, int index, double params) {
 
-		#ifdef LIME_GLES3_API
-		glGetBufferParameteri64v (target, index, (GLint64*)(uintptr_t)params);
-		#endif
+		lime_gl_get_buffer_parameteri64v (target, index, params);
 
 	}
 
 
 	void lime_gl_get_buffer_parameteriv (int target, int index, double params) {
 
-		glGetBufferParameteriv (target, index, (GLint*)(uintptr_t)params);
+		auto query = [=] () {
+			glGetBufferParameteriv (target, index, (GLint*)(uintptr_t)params);
+		};
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded)
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, query);
+		else
+			query();
 
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_get_buffer_parameteriv) (int target, int index, double params) {
 
-		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
-				glGetBufferParameteriv (target, index, (GLint*)(uintptr_t)params);
-			});
-		} else {
-			glGetBufferParameteriv (target, index, (GLint*)(uintptr_t)params);
-		}
+		lime_gl_get_buffer_parameteriv (target, index, params);
 
 	}
 
@@ -3453,7 +3477,7 @@ namespace lime {
 	double lime_gl_get_buffer_pointerv (int target, int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<double>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<double>(__func__, [=] () {
 				uintptr_t result = 0;
 				#ifdef LIME_GLES3_API
 				glGetBufferPointerv (target, pname, (void**)&result);
@@ -3474,7 +3498,7 @@ namespace lime {
 	HL_PRIM double HL_NAME(hl_gl_get_buffer_pointerv) (int target, int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<double>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<double>(__func__, [=] () {
 				uintptr_t result = 0;
 				#ifdef LIME_GLES3_API
 				glGetBufferPointerv (target, pname, (void**)&result);
@@ -3505,7 +3529,7 @@ namespace lime {
 
 		#ifndef LIME_GLES
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetBufferSubData (target, (GLintptr)(uintptr_t)offset, size, (void*)(uintptr_t)data);
 			});
 		} else {
@@ -3553,7 +3577,7 @@ namespace lime {
 	int lime_gl_get_error () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, [=] () {
 				return glGetError ();
 			});
 		} else {
@@ -3566,7 +3590,7 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_get_error) () {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, [=] () {
 				return glGetError ();
 			});
 		} else {
@@ -3679,7 +3703,7 @@ namespace lime {
 	float lime_gl_get_float (int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<float>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<float>(__func__, [=] () {
 				GLfloat params = 0;
 				glGetFloatv (pname, &params);
 				return (float)params;
@@ -3696,7 +3720,7 @@ namespace lime {
 	HL_PRIM float HL_NAME(hl_gl_get_float) (int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<float>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<float>(__func__, [=] () {
 				GLfloat params = 0;
 				glGetFloatv (pname, &params);
 				return (float)params;
@@ -3713,7 +3737,7 @@ namespace lime {
 	void lime_gl_get_floatv (int pname, double params) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetFloatv (pname, (GLfloat*)(uintptr_t)params);
 			});
 		} else {
@@ -3726,7 +3750,7 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_get_floatv) (int pname, double params) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetFloatv (pname, (GLfloat*)(uintptr_t)params);
 			});
 		} else {
@@ -3752,7 +3776,7 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			std::string nameStr = name ? (char*)hl_to_utf8(name->bytes) : "";
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, [=] () {
 				return glGetFragDataLocation (program, nameStr.c_str());
 			});
 		} else {
@@ -3768,7 +3792,7 @@ namespace lime {
 	int lime_gl_get_framebuffer_attachment_parameteri (int target, int attachment, int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, [=] () {
 				GLint params = 0;
 				glGetFramebufferAttachmentParameteriv (target, attachment, pname, &params);
 				return params;
@@ -3785,7 +3809,7 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_get_framebuffer_attachment_parameteri) (int target, int attachment, int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, [=] () {
 				GLint params = 0;
 				glGetFramebufferAttachmentParameteriv (target, attachment, pname, &params);
 				return params;
@@ -3802,7 +3826,7 @@ namespace lime {
 	void lime_gl_get_framebuffer_attachment_parameteriv (int target, int attachment, int pname, double params) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetFramebufferAttachmentParameteriv (target, attachment, pname, (GLint*)(uintptr_t)params);
 			});
 		} else {
@@ -3815,7 +3839,7 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_get_framebuffer_attachment_parameteriv) (int target, int attachment, int pname, double params) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetFramebufferAttachmentParameteriv (target, attachment, pname, (GLint*)(uintptr_t)params);
 			});
 		} else {
@@ -3828,7 +3852,7 @@ namespace lime {
 	int lime_gl_get_integer (int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, [=] () {
 				GLint params = 0;
 				glGetIntegerv (pname, &params);
 				return (int)params;
@@ -3845,7 +3869,7 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_get_integer) (int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, [=] () {
 				GLint params = 0;
 				glGetIntegerv (pname, &params);
 				return (int)params;
@@ -3863,7 +3887,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetInteger64v (pname, (GLint64*)(uintptr_t)params);
 			});
 		} else {
@@ -3878,7 +3902,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetInteger64v (pname, (GLint64*)(uintptr_t)params);
 			});
 		} else {
@@ -3893,7 +3917,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetInteger64i_v (pname, index, (GLint64*)(uintptr_t)params);
 			});
 		} else {
@@ -3908,7 +3932,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetInteger64i_v (pname, index, (GLint64*)(uintptr_t)params);
 			});
 		} else {
@@ -3922,7 +3946,7 @@ namespace lime {
 	void lime_gl_get_integerv (int pname, double params) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetIntegerv (pname, (GLint*)(uintptr_t)params);
 			});
 		} else {
@@ -3935,7 +3959,7 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_get_integerv) (int pname, double params) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetIntegerv (pname, (GLint*)(uintptr_t)params);
 			});
 		} else {
@@ -3949,7 +3973,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetIntegeri_v (pname, index, (GLint*)(uintptr_t)params);
 			});
 		} else {
@@ -3964,7 +3988,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetIntegeri_v (pname, index, (GLint*)(uintptr_t)params);
 			});
 		} else {
@@ -3979,7 +4003,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetInternalformativ (target, internalformat, pname, (GLsizei)bufSize, (GLint*)(uintptr_t)params);
 			});
 		} else {
@@ -3994,7 +4018,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetInternalformativ (target, internalformat, pname, (GLsizei)bufSize, (GLint*)(uintptr_t)params);
 			});
 		} else {
@@ -4045,7 +4069,7 @@ namespace lime {
 	value lime_gl_get_program_info_log (int handle) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			std::string log = OpenGLBindings::renderThread->RunCommandAndWait<std::string>([=] () {
+			std::string log = OpenGLBindings::renderThread->RunCommandAndWait<std::string>(__func__, [=] () {
 				GLuint program = handle;
 				GLint logSize = 0;
 				glGetProgramiv (program, GL_INFO_LOG_LENGTH, &logSize);
@@ -4085,7 +4109,7 @@ namespace lime {
 	HL_PRIM vbyte* HL_NAME(hl_gl_get_program_info_log) (int handle) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			std::string log = OpenGLBindings::renderThread->RunCommandAndWait<std::string>([=] () {
+			std::string log = OpenGLBindings::renderThread->RunCommandAndWait<std::string>(__func__, [=] () {
 				GLuint program = handle;
 				GLint logSize = 0;
 				glGetProgramiv (program, GL_INFO_LOG_LENGTH, &logSize);
@@ -4126,7 +4150,7 @@ namespace lime {
 	int lime_gl_get_programi (int program, int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, [=] () {
 				GLint params = 0;
 				glGetProgramiv (program, pname, &params);
 				return params;
@@ -4143,7 +4167,7 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_get_programi) (int program, int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, [=] () {
 				GLint params = 0;
 				glGetProgramiv (program, pname, &params);
 				return (int)params;
@@ -4167,7 +4191,7 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_get_programiv) (int program, int pname, double params) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetProgramiv (program, pname, (GLint*)(uintptr_t)params);
 			});
 		} else {
@@ -4372,7 +4396,7 @@ namespace lime {
 	value lime_gl_get_shader_info_log (int handle) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			std::string log = OpenGLBindings::renderThread->RunCommandAndWait<std::string>([=] () {
+			std::string log = OpenGLBindings::renderThread->RunCommandAndWait<std::string>(__func__, [=] () {
 				GLuint shader = handle;
 				GLint logSize = 0;
 				glGetShaderiv (shader, GL_INFO_LOG_LENGTH, &logSize);
@@ -4413,7 +4437,7 @@ namespace lime {
 	HL_PRIM vbyte* HL_NAME(hl_gl_get_shader_info_log) (int handle) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			std::string log = OpenGLBindings::renderThread->RunCommandAndWait<std::string>([=] () {
+			std::string log = OpenGLBindings::renderThread->RunCommandAndWait<std::string>(__func__, [=] () {
 				GLuint shader = handle;
 				GLint logSize = 0;
 				glGetShaderiv (shader, GL_INFO_LOG_LENGTH, &logSize);
@@ -4455,7 +4479,7 @@ namespace lime {
 	int lime_gl_get_shaderi (int shader, int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, [=] () {
 				GLint params = 0;
 				glGetShaderiv (shader, pname, &params);
 				return params;
@@ -4472,7 +4496,7 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_get_shaderi) (int shader, int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, [=] () {
 				GLint params = 0;
 				glGetShaderiv (shader, pname, &params);
 				return (int)params;
@@ -4496,7 +4520,7 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_get_shaderiv) (int shader, int pname, double params) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetShaderiv (shader, pname, (GLint*)(uintptr_t)params);
 			});
 		} else {
@@ -4561,7 +4585,7 @@ namespace lime {
 	value lime_gl_get_shader_source (int shader) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			std::string source = OpenGLBindings::renderThread->RunCommandAndWait<std::string>([=] () {
+			std::string source = OpenGLBindings::renderThread->RunCommandAndWait<std::string>(__func__, [=] () {
 				GLint len = 0;
 				glGetShaderiv (shader, GL_SHADER_SOURCE_LENGTH, &len);
 
@@ -4603,7 +4627,7 @@ namespace lime {
 	HL_PRIM vbyte* HL_NAME(hl_gl_get_shader_source) (int shader) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			std::string source = OpenGLBindings::renderThread->RunCommandAndWait<std::string>([=] () {
+			std::string source = OpenGLBindings::renderThread->RunCommandAndWait<std::string>(__func__, [=] () {
 				GLint len = 0;
 				glGetShaderiv (shader, GL_SHADER_SOURCE_LENGTH, &len);
 				if (len == 0) return std::string("");
@@ -4640,7 +4664,7 @@ namespace lime {
 	value lime_gl_get_string (int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			std::string val = OpenGLBindings::renderThread->RunCommandAndWait<std::string>([=] () {
+			std::string val = OpenGLBindings::renderThread->RunCommandAndWait<std::string>(__func__, [=] () {
 				const char* result = (const char*)glGetString (pname);
 				return result ? std::string(result) : std::string("");
 			});
@@ -4665,7 +4689,7 @@ namespace lime {
 	HL_PRIM vbyte* HL_NAME(hl_gl_get_string) (int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			std::string val = OpenGLBindings::renderThread->RunCommandAndWait<std::string>([=] () {
+			std::string val = OpenGLBindings::renderThread->RunCommandAndWait<std::string>(__func__, [=] () {
 				const char* result = (const char*)glGetString (pname);
 				return result ? std::string(result) : std::string("");
 			});
@@ -4785,7 +4809,7 @@ namespace lime {
 	float lime_gl_get_tex_parameterf (int target, int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<float>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<float>(__func__, [=] () {
 				GLfloat params = 0;
 				glGetTexParameterfv (target, pname, &params);
 				return (float)params;
@@ -4802,7 +4826,7 @@ namespace lime {
 	HL_PRIM float HL_NAME(hl_gl_get_tex_parameterf) (int target, int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<float>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<float>(__func__, [=] () {
 				GLfloat params = 0;
 				glGetTexParameterfv (target, pname, &params);
 				return (float)params;
@@ -4830,10 +4854,41 @@ namespace lime {
 	}
 
 
+	int lime_gl_get_tex_level_parameteri(int target, int level, int pname) {
+#if defined(LIME_SDL)
+		auto query = [=]() {
+#if defined(LIME_GLES) || defined(NATIVE_TOOLKIT_SDL_ANGLE)
+			const char* version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+			int major = 0;
+			int minor = 0;
+			if (!version || std::sscanf(version, "OpenGL ES %d.%d", &major, &minor) != 2 ||
+				major < 3 || (major == 3 && minor == 0)) return 0;
+#endif
+#if defined(HX_WINDOWS)
+			using Procedure = void (APIENTRY*)(GLenum, GLint, GLenum, GLint*);
+#else
+			using Procedure = void (*)(GLenum, GLint, GLenum, GLint*);
+#endif
+			const auto getLevel = reinterpret_cast<Procedure>(SDL_GL_GetProcAddress("glGetTexLevelParameteriv"));
+			if (!getLevel) return 0;
+			GLint result = 0;
+			getLevel(target, level, pname, &result);
+			return static_cast<int>(result);
+		};
+
+		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded)
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, query);
+		return query();
+#else
+		return 0;
+#endif
+	}
+
+
 	int lime_gl_get_tex_parameteri (int target, int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, [=] () {
 				GLint params = 0;
 				glGetTexParameteriv (target, pname, &params);
 				return (int)params;
@@ -4850,7 +4905,7 @@ namespace lime {
 	HL_PRIM int HL_NAME(hl_gl_get_tex_parameteri) (int target, int pname) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, [=] () {
 				GLint params = 0;
 				glGetTexParameteriv (target, pname, &params);
 				return (int)params;
@@ -4867,7 +4922,7 @@ namespace lime {
 	void lime_gl_get_tex_parameteriv (int target, int pname, double params) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetTexParameteriv (target, pname, (GLint*)(uintptr_t)params);
 			});
 		} else {
@@ -4880,7 +4935,7 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_get_tex_parameteriv) (int target, int pname, double params) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glGetTexParameteriv (target, pname, (GLint*)(uintptr_t)params);
 			});
 		} else {
@@ -5075,7 +5130,7 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			std::string nameStr = uniformBlockName ? (char*)hl_to_utf8(uniformBlockName->bytes) : "";
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<int>(__func__, [=] () {
 				return glGetUniformBlockIndex (program, nameStr.c_str());
 			});
 		} else {
@@ -5092,9 +5147,9 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			std::string nameStr(name.__s);
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWaitOr<int>(__func__, [=] () {
 				return glGetUniformLocation (program, nameStr.c_str());
-			});
+			}, -1);
 		} else {
 			return glGetUniformLocation (program, name.__s);
 		}
@@ -5106,9 +5161,9 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			std::string nameStr = name ? (char*)hl_to_utf8(name->bytes) : "";
-			return OpenGLBindings::renderThread->RunCommandAndWait<int>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWaitOr<int>(__func__, [=] () {
 				return glGetUniformLocation (program, nameStr.c_str());
-			});
+			}, -1);
 		} else {
 			return glGetUniformLocation (program, name ? (char*)hl_to_utf8 (name->bytes) : NULL);
 		}
@@ -5575,7 +5630,7 @@ namespace lime {
 	void lime_gl_link_program (int program) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glLinkProgram (program);
 				GLint status;
 				glGetProgramiv(program, GL_LINK_STATUS, &status);
@@ -5603,7 +5658,7 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_link_program) (int program) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glLinkProgram (program);
 				GLint status;
 				glGetProgramiv(program, GL_LINK_STATUS, &status);
@@ -5629,7 +5684,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<double>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<double>(__func__, [=] () {
 				uintptr_t result = (uintptr_t)glMapBufferRange (target, (GLintptr)(uintptr_t)offset, length, access);
 				return (double)result;
 			});
@@ -5648,7 +5703,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<double>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<double>(__func__, [=] () {
 				uintptr_t result = (uintptr_t)glMapBufferRange (target, (GLintptr)(uintptr_t)offset, length, access);
 				return (double)result;
 			});
@@ -5664,139 +5719,39 @@ namespace lime {
 
 
 	void lime_gl_object_deregister (value object) {
-
-		if (glObjectIDs.find (object) != glObjectIDs.end ()) {
-
-			GLuint id = glObjectIDs[object];
-			GLObjectType type = glObjectTypes[object];
-
-			glObjects[type].erase (id);
-			glObjectTypes.erase (object);
-			glObjectIDs.erase (object);
-
-		}
-
-		if (glObjectPtrs.find (object) != glObjectPtrs.end ()) {
-
-			value handle = (value)glObjectPtrs[object];
-			val_gc (handle, 0);
-			glObjectPtrs.erase (object);
-
-		}
-
+		auto handle = static_cast<value> (DeregisterGLObject (object));
+		if (handle) val_gc (handle, 0);
 	}
 
 
 	HL_PRIM void HL_NAME(hl_gl_object_deregister) (void* object) {
-
-		if (glObjectIDs.find (object) != glObjectIDs.end ()) {
-
-			GLuint id = glObjectIDs[object];
-			GLObjectType type = glObjectTypes[object];
-
-			glObjects[type].erase (id);
-			glObjectTypes.erase (object);
-			glObjectIDs.erase (object);
-
-		}
-
-		if (glObjectPtrs.find (object) != glObjectPtrs.end ()) {
-
-			HL_CFFIPointer* handle = (HL_CFFIPointer*)glObjectPtrs[object];
-			handle->finalizer = NULL;
-			//delete handle;
-			glObjectPtrs.erase (object);
-
-		}
-
+		auto* handle = static_cast<HL_CFFIPointer*> (DeregisterGLObject (object));
+		if (handle) handle->finalizer = nullptr;
 	}
 
 
 	value lime_gl_object_from_id (int id, int type) {
-
-		GLObjectType _type = (GLObjectType)type;
-
-		if (glObjects[_type].find (id) != glObjects[_type].end ()) {
-
-			return (value)glObjects[_type][id];
-
-		} else {
-
-			return alloc_null ();
-
-		}
-
+		auto object = static_cast<value> (FindGLObject (static_cast<GLObjectType> (type), id));
+		return object ? object : alloc_null ();
 	}
 
 
 	HL_PRIM void* HL_NAME(hl_gl_object_from_id) (int id, int type) {
-
-		GLObjectType _type = (GLObjectType)type;
-
-		if (glObjects[_type].find (id) != glObjects[_type].end ()) {
-
-			return glObjects[_type][id];
-
-		} else {
-
-			return NULL;
-
-		}
-
+		return FindGLObject (static_cast<GLObjectType> (type), id);
 	}
 
 
 	value lime_gl_object_register (int id, int type, value object) {
-
-		GLObjectType _type = (GLObjectType)type;
 		value handle = CFFIPointer (object, gc_gl_object);
-
-		//if (glObjects[_type].find (id) != glObjects[_type].end ()) {
-			//
-			//value otherObject = glObjects[_type][id];
-			//if (otherObject == object) return;
-			//
-			//glObjectTypes.erase (otherObject);
-			//glObjectIDs.erase (object);
-			//
-			//val_gc (otherObject, 0);
-			//
-		//}
-
-		glObjectTypes[object] = (GLObjectType)type;
-		glObjectIDs[object] = id;
-		glObjects[_type][id] = object;
-		glObjectPtrs[object] = handle;
-
+		RegisterGLObject (object, static_cast<GLObjectType> (type), id, handle);
 		return handle;
-
 	}
 
 
 	HL_PRIM HL_CFFIPointer* HL_NAME(hl_gl_object_register) (int id, int type, void* object) {
-
-		GLObjectType _type = (GLObjectType)type;
-		HL_CFFIPointer* handle = HLCFFIPointer ((vobj*)object, (hl_finalizer)gc_gl_object);
-
-		//if (glObjects[_type].find (id) != glObjects[_type].end ()) {
-			//
-			//value otherObject = glObjects[_type][id];
-			//if (otherObject == object) return;
-			//
-			//glObjectTypes.erase (otherObject);
-			//glObjectIDs.erase (object);
-			//
-			//val_gc (otherObject, 0);
-			//
-		//}
-
-		glObjectTypes[object] = (GLObjectType)type;
-		glObjectIDs[object] = id;
-		glObjects[_type][id] = object;
-		glObjectPtrs[object] = handle;
-
+		auto* handle = HLCFFIPointer (static_cast<vobj*> (object), (hl_finalizer)gc_gl_object);
+		RegisterGLObject (object, static_cast<GLObjectType> (type), id, handle);
 		return handle;
-
 	}
 
 
@@ -5886,12 +5841,11 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			void* binaryCopy = malloc(length);
-			memcpy(binaryCopy, (void*)(uintptr_t)binary, length);
+			auto binaryCopy = CopyGLBytes (binary, length);
+			if (binary != 0 && length > 0 && !binaryCopy) return;
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (binaryCopy), [=] (const void* binaryCopy) {
 				glProgramBinary (program, binaryFormat, binaryCopy, length);
-				free(binaryCopy);
 			});
 		} else {
 			glProgramBinary (program, binaryFormat, (void*)(uintptr_t)binary, length);
@@ -5905,12 +5859,11 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			void* binaryCopy = malloc(length);
-			memcpy(binaryCopy, (void*)(uintptr_t)binary, length);
+			auto binaryCopy = CopyGLBytes (binary, length);
+			if (binary != 0 && length > 0 && !binaryCopy) return;
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (binaryCopy), [=] (const void* binaryCopy) {
 				glProgramBinary (program, binaryFormat, binaryCopy, length);
-				free(binaryCopy);
 			});
 		} else {
 			glProgramBinary (program, binaryFormat, (void*)(uintptr_t)binary, length);
@@ -5984,7 +5937,7 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			// This MUST be synchronous because we are reading back to CPU memory provided by the caller
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glReadPixels (x, y, width, height, format, type, (void*)(uintptr_t)pixels);
 			});
 		} else {
@@ -5997,7 +5950,7 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_read_pixels) (int x, int y, int width, int height, int format, int type, double pixels) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glReadPixels (x, y, width, height, format, type, (void*)(uintptr_t)pixels);
 			});
 		} else {
@@ -6237,7 +6190,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		GLsizei size = val_array_size (shaders);
-		GLenum *shadersCopy = new GLenum[size];
+		std::unique_ptr<GLenum[]> shadersCopy (new GLenum[size]);
 
 		for (int i = 0; i < size; i++) {
 
@@ -6246,17 +6199,16 @@ namespace lime {
 		}
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			void* binaryCopy = malloc(length);
-			memcpy(binaryCopy, (void*)(uintptr_t)binary, length);
-			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
-				glShaderBinary (size, shadersCopy, binaryformat, binaryCopy, length);
-				delete[] shadersCopy;
-				free(binaryCopy);
-			});
+			auto binaryCopy = CopyGLBytes (binary, length);
+			if (binary != 0 && length > 0 && !binaryCopy) return;
+
+			using BinaryData = std::pair<std::unique_ptr<GLenum[]>, GLBytes>;
+			QueueGLCommand (BinaryData (std::move (shadersCopy), std::move (binaryCopy)),
+				[=] (const BinaryData& data) {
+					glShaderBinary (size, data.first.get (), binaryformat, data.second.get (), length);
+				});
 		} else {
-			glShaderBinary (size, shadersCopy, binaryformat, (void*)(uintptr_t)binary, length);
-			delete[] shadersCopy;
+			glShaderBinary (size, shadersCopy.get (), binaryformat, (void*)(uintptr_t)binary, length);
 		}
 		#endif
 
@@ -6267,23 +6219,22 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		GLsizei size = shaders->size;
-		GLenum *shadersCopy = new GLenum[size];
+		std::unique_ptr<GLenum[]> shadersCopy (new GLenum[size]);
 		
 		GLenum* src = (GLenum*)hl_aptr (shaders, int);
 		for(int i=0; i<size; i++) shadersCopy[i] = src[i];
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			void* binaryCopy = malloc(length);
-			memcpy(binaryCopy, (void*)(uintptr_t)binary, length);
-			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
-				glShaderBinary (size, shadersCopy, binaryformat, binaryCopy, length);
-				delete[] shadersCopy;
-				free(binaryCopy);
-			});
+			auto binaryCopy = CopyGLBytes (binary, length);
+			if (binary != 0 && length > 0 && !binaryCopy) return;
+
+			using BinaryData = std::pair<std::unique_ptr<GLenum[]>, GLBytes>;
+			QueueGLCommand (BinaryData (std::move (shadersCopy), std::move (binaryCopy)),
+				[=] (const BinaryData& data) {
+					glShaderBinary (size, data.first.get (), binaryformat, data.second.get (), length);
+				});
 		} else {
-			glShaderBinary (size, shadersCopy, binaryformat, (void*)(uintptr_t)binary, length);
-			delete[] shadersCopy;
+			glShaderBinary (size, shadersCopy.get (), binaryformat, (void*)(uintptr_t)binary, length);
 		}
 		#endif
 
@@ -6294,7 +6245,7 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			std::string sourceStr(source.__s);
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				const char* s = sourceStr.c_str();
 				glShaderSource (handle, 1, &s, 0);
 			});
@@ -6309,7 +6260,7 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			std::string sourceStr = source ? (char*)hl_to_utf8(source->bytes) : "";
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				const char* s = sourceStr.c_str();
 				glShaderSource (handle, 1, &s, 0);
 			});
@@ -6477,6 +6428,85 @@ namespace lime {
 	}
 
 
+	namespace {
+		constexpr GLenum pixelUnpackBuffer = 0x88EC;
+		constexpr GLenum pixelUnpackBufferBinding = 0x88EF;
+		constexpr GLenum unpackRowLength = 0x0CF2;
+		constexpr GLenum unpackSkipRows = 0x0CF3;
+		constexpr GLenum unpackSkipPixels = 0x0CF4;
+		constexpr GLenum bgraFormat = 0x80E1;
+
+		class PackedTextureUpload {
+		public:
+			PackedTextureUpload (int internalFormat, int width, int height, int format)
+				: internalFormat (internalFormat), width (width), height (height), format (format) {}
+
+			std::uint64_t byteLength () const {
+				if (width <= 0 || height <= 0 || (format != GL_RGBA && format != bgraFormat)) return 0;
+				return static_cast<std::uint64_t> (width) * height * 4;
+			}
+
+			void operator() (const void* pixels) const {
+				const char* version = reinterpret_cast<const char*> (glGetString (GL_VERSION));
+				if (!version) return;
+				const char* digits = std::strpbrk (version, "0123456789");
+				int major = 0;
+				int minor = 0;
+				if (digits) std::sscanf (digits, "%d.%d", &major, &minor);
+
+				const bool embedded = std::strncmp (version, "OpenGL ES", 9) == 0;
+				const bool unpackRows = !embedded || major >= 3 || SDL_GL_ExtensionSupported ("GL_EXT_unpack_subimage");
+				const bool unpackBuffer = major >= 3 || (embedded
+					? SDL_GL_ExtensionSupported ("GL_NV_pixel_buffer_object")
+					: (major == 2 && minor >= 1) || SDL_GL_ExtensionSupported ("GL_ARB_pixel_buffer_object")
+						|| SDL_GL_ExtensionSupported ("GL_EXT_pixel_buffer_object"));
+
+				// The caller supplies packed CPU pixels, independently of the context's unpack state.
+				GLint buffer = 0;
+				if (unpackBuffer) {
+					glGetIntegerv (pixelUnpackBufferBinding, &buffer);
+					if (buffer) glBindBuffer (pixelUnpackBuffer, 0);
+				}
+				const GLenum unpackModes[] = {GL_UNPACK_ALIGNMENT, unpackRowLength, unpackSkipRows, unpackSkipPixels};
+				const GLint packedValues[] = {4, 0, 0, 0};
+				GLint savedValues[4] = {};
+				const int modeCount = unpackRows ? 4 : 1;
+				for (int index = 0; index < modeCount; ++index) {
+					glGetIntegerv (unpackModes[index], &savedValues[index]);
+					if (savedValues[index] != packedValues[index]) glPixelStorei (unpackModes[index], packedValues[index]);
+				}
+				glTexImage2D (GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, GL_UNSIGNED_BYTE, pixels);
+				for (int index = 0; index < modeCount; ++index) {
+					if (savedValues[index] != packedValues[index]) glPixelStorei (unpackModes[index], savedValues[index]);
+				}
+				if (buffer) glBindBuffer (pixelUnpackBuffer, buffer);
+			}
+
+		private:
+			const int internalFormat;
+			const int width;
+			const int height;
+			const int format;
+		};
+	}
+
+	bool lime_gl_queue_packed_texture_image_2d (int internalFormat, int width, int height, int format, value buffer, int offset, int length) {
+		if (!OpenGLBindings::renderThread || !OpenGLBindings::isMultiThreaded || !OpenGLBindings::CanRender ()) return false;
+
+		const PackedTextureUpload upload (internalFormat, width, height, format);
+		const auto byteLength = upload.byteLength ();
+		if (offset < 0 || length <= 0 || byteLength == 0 || byteLength > static_cast<std::uint64_t> (length)) return false;
+
+		Bytes bytes (buffer);
+		if (!bytes.b || offset > bytes.length || length > bytes.length - offset) return false;
+
+		GLBytes pixels (std::malloc (static_cast<std::size_t> (byteLength)), std::free);
+		if (!pixels) return false;
+		memcpy (pixels.get (), bytes.b + offset, static_cast<std::size_t> (byteLength));
+		return QueueGLBuffer (std::move (pixels), upload);
+	}
+
+
 	void lime_gl_tex_image_2d (int target, int level, int internalformat, int width, int height, int border, int format, int type, double data) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
@@ -6487,7 +6517,7 @@ namespace lime {
 				return;
 			}
 			
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glTexImage2D (target, level, internalformat, width, height, border, format, type, (void*)(uintptr_t)data);
 			});
 		} else {
@@ -6505,7 +6535,7 @@ namespace lime {
 					glTexImage2D (target, level, internalformat, width, height, border, format, type, nullptr);
 				});
 			} else {
-				OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 					glTexImage2D (target, level, internalformat, width, height, border, format, type, (void*)(uintptr_t)data);
 				});
 			}
@@ -6525,7 +6555,7 @@ namespace lime {
 					glTexImage3D (target, level, internalformat, width, height, depth, border, format, type, nullptr);
 				});
 			} else {
-				OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 					glTexImage3D (target, level, internalformat, width, height, depth, border, format, type, (void*)(uintptr_t)data);
 				});
 			}
@@ -6546,7 +6576,7 @@ namespace lime {
 					glTexImage3D (target, level, internalformat, width, height, depth, border, format, type, nullptr);
 				});
 			} else {
-				OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+				OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 					glTexImage3D (target, level, internalformat, width, height, depth, border, format, type, (void*)(uintptr_t)data);
 				});
 			}
@@ -6650,7 +6680,7 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			// Blocking for safety and simplicity
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glTexSubImage2D (target, level, xoffset, yoffset, width, height, format, type, (void*)(uintptr_t)data);
 			});
 		} else {
@@ -6671,7 +6701,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glTexSubImage3D (target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, (void*)(uintptr_t)data);
 			});
 		} else {
@@ -6686,7 +6716,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->RunCommandAndWait<void>([=] () {
+			OpenGLBindings::renderThread->RunCommandAndWait<void>(__func__, [=] () {
 				glTexSubImage3D (target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, (void*)(uintptr_t)data);
 			});
 		} else {
@@ -6703,66 +6733,20 @@ namespace lime {
 		GLsizei size = val_array_size (varyings);
 		
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			// Deep copy the strings
-			char** _varyings = new char*[size];
-			std::vector<std::string> stringStorage;
-			stringStorage.reserve(size);
-			
-			for (int i = 0; i < size; i++) {
-				stringStorage.push_back(val_string (val_array_i (varyings, i)));
-				_varyings[i] = (char*)stringStorage.back().c_str();
+			std::vector<std::string> names;
+			names.reserve (size);
+			for (int index = 0; index < size; ++index) {
+				names.emplace_back (val_string (val_array_i (varyings, index)));
 			}
 
-			// We need to capture the data. But wait, capturing char** pointing to stack/local memory is dangerous in async.
-			// The PushCommand lambda will execute later.
-			// So we need a way to pass this data safely.
-			// Actually, stringStorage will be destroyed at end of function.
-			// So we must allocate persistent memory and free it in the lambda.
-			
-			// Let's allocate a single block or use a structure.
-			// Simplified approach: Vector of strings is hard to capture by value in lambda if we want C-array of pointers.
-			
-			// Let's create a struct to hold the data
-			struct VaryingsData {
-				int size;
-				char** names;
-				char* buffer; // flat buffer for all strings
-			};
-			
-			// Calculate total size
-			int totalLen = 0;
-			for (int i=0; i<size; i++) {
-				totalLen += strlen(val_string (val_array_i (varyings, i))) + 1;
-			}
-			
-			char* buffer = new char[totalLen];
-			char** names = new char*[size];
-			
-			char* ptr = buffer;
-			for (int i=0; i<size; i++) {
-				const char* src = val_string (val_array_i (varyings, i));
-				int len = strlen(src) + 1;
-				memcpy(ptr, src, len);
-				names[i] = ptr;
-				ptr += len;
-			}
-			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
-				// Re-patch pointers if necessary? No, 'buffer' is a pointer, 'names' is a pointer.
-				// But wait, 'names' contains pointers into 'buffer'.
-				// If we capture 'buffer' (the pointer) and 'names' (the pointer), it's fine.
-				// But we need to update 'names' entries to point to 'buffer' if we copied them?
-				// Actually, we allocated 'buffer' on heap, so its address is stable.
-				// 'names' is allocated on heap, its content (pointers to buffer) is stable.
-				
-				glTransformFeedbackVaryings (program, size, (const char**)names, bufferMode);
-				
-				delete[] buffer;
-				delete[] names;
+			QueueGLCommand (std::move (names), [=] (const std::vector<std::string>& ownedNames) {
+				std::vector<const GLchar*> pointers;
+				pointers.reserve (ownedNames.size ());
+				for (const auto& name : ownedNames) pointers.push_back (name.c_str ());
+				glTransformFeedbackVaryings (program, size, pointers.data (), bufferMode);
 			});
-			
 		} else {
-			const char **_varyings = (const char**)alloca (size * sizeof(GLenum));
+			const char **_varyings = (const char**)alloca (size * sizeof(const char*));
 
 			for (int i = 0; i < size; i++) {
 				_varyings[i] = val_string (val_array_i (varyings, i));
@@ -6815,12 +6799,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniform1fv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform1fv (location, count, (GLfloat*)(uintptr_t)_value);
@@ -6833,12 +6816,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniform1fv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform1fv (location, count, (GLfloat*)(uintptr_t)_value);
@@ -6877,12 +6859,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * sizeof(GLint);
-			GLint* dataCopy = new GLint[count];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLint[]> dataCopy (new GLint[count]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLint* dataCopy) {
 				glUniform1iv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform1iv (location, count, (GLint*)(uintptr_t)_value);
@@ -6895,12 +6876,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * sizeof(GLint);
-			GLint* dataCopy = new GLint[count];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLint[]> dataCopy (new GLint[count]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLint* dataCopy) {
 				glUniform1iv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform1iv (location, count, (GLint*)(uintptr_t)_value);
@@ -6944,12 +6924,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * sizeof(GLuint);
-			GLuint* dataCopy = new GLuint[count];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLuint[]> dataCopy (new GLuint[count]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLuint* dataCopy) {
 				glUniform1uiv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform1uiv (location, count, (GLuint*)(uintptr_t)_value);
@@ -6964,12 +6943,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * sizeof(GLuint);
-			GLuint* dataCopy = new GLuint[count];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLuint[]> dataCopy (new GLuint[count]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLuint* dataCopy) {
 				glUniform1uiv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform1uiv (location, count, (GLuint*)(uintptr_t)_value);
@@ -7009,12 +6987,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 2 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 2];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 2]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniform2fv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform2fv (location, count, (GLfloat*)(uintptr_t)_value);
@@ -7027,12 +7004,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 2 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 2];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 2]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniform2fv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform2fv (location, count, (GLfloat*)(uintptr_t)_value);
@@ -7071,12 +7047,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 2 * sizeof(GLint);
-			GLint* dataCopy = new GLint[count * 2];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLint[]> dataCopy (new GLint[count * 2]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLint* dataCopy) {
 				glUniform2iv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform2iv (location, count, (GLint*)(uintptr_t)_value);
@@ -7089,12 +7064,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 2 * sizeof(GLint);
-			GLint* dataCopy = new GLint[count * 2];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLint[]> dataCopy (new GLint[count * 2]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLint* dataCopy) {
 				glUniform2iv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform2iv (location, count, (GLint*)(uintptr_t)_value);
@@ -7135,12 +7109,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 2 * sizeof(GLuint);
-			GLuint* dataCopy = new GLuint[count * 2];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLuint[]> dataCopy (new GLuint[count * 2]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLuint* dataCopy) {
 				glUniform2uiv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform2uiv (location, count, (GLuint*)(uintptr_t)_value);
@@ -7180,12 +7153,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 3 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 3];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 3]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniform3fv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform3fv (location, count, (GLfloat*)(uintptr_t)_value);
@@ -7198,12 +7170,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 3 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 3];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 3]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniform3fv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform3fv (location, count, (GLfloat*)(uintptr_t)_value);
@@ -7242,12 +7213,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 3 * sizeof(GLint);
-			GLint* dataCopy = new GLint[count * 3];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLint[]> dataCopy (new GLint[count * 3]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLint* dataCopy) {
 				glUniform3iv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform3iv (location, count, (GLint*)(uintptr_t)_value);
@@ -7260,12 +7230,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 3 * sizeof(GLint);
-			GLint* dataCopy = new GLint[count * 3];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLint[]> dataCopy (new GLint[count * 3]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLint* dataCopy) {
 				glUniform3iv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform3iv (location, count, (GLint*)(uintptr_t)_value);
@@ -7303,12 +7272,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 3 * sizeof(GLuint);
-			GLuint* dataCopy = new GLuint[count * 3];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLuint[]> dataCopy (new GLuint[count * 3]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLuint* dataCopy) {
 				glUniform3uiv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform3uiv (location, count, (GLuint*)(uintptr_t)_value);
@@ -7323,12 +7291,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 3 * sizeof(GLuint);
-			GLuint* dataCopy = new GLuint[count * 3];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLuint[]> dataCopy (new GLuint[count * 3]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLuint* dataCopy) {
 				glUniform3uiv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform3uiv (location, count, (GLuint*)(uintptr_t)_value);
@@ -7368,12 +7335,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 4 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 4];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 4]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniform4fv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform4fv (location, count, (GLfloat*)(uintptr_t)_value);
@@ -7386,12 +7352,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 4 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 4];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 4]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniform4fv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform4fv (location, count, (GLfloat*)(uintptr_t)_value);
@@ -7430,12 +7395,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 4 * sizeof(GLint);
-			GLint* dataCopy = new GLint[count * 4];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLint[]> dataCopy (new GLint[count * 4]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLint* dataCopy) {
 				glUniform4iv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform4iv (location, count, (GLint*)(uintptr_t)_value);
@@ -7448,12 +7412,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 4 * sizeof(GLint);
-			GLint* dataCopy = new GLint[count * 4];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLint[]> dataCopy (new GLint[count * 4]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLint* dataCopy) {
 				glUniform4iv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform4iv (location, count, (GLint*)(uintptr_t)_value);
@@ -7497,12 +7460,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 4 * sizeof(GLuint);
-			GLuint* dataCopy = new GLuint[count * 4];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLuint[]> dataCopy (new GLuint[count * 4]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLuint* dataCopy) {
 				glUniform4uiv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform4uiv (location, count, (GLuint*)(uintptr_t)_value);
@@ -7517,12 +7479,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 4 * sizeof(GLuint);
-			GLuint* dataCopy = new GLuint[count * 4];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLuint[]> dataCopy (new GLuint[count * 4]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLuint* dataCopy) {
 				glUniform4uiv (location, count, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniform4uiv (location, count, (GLuint*)(uintptr_t)_value);
@@ -7566,12 +7527,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 2 * 2 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 2 * 2];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 2 * 2]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniformMatrix2fv (location, count, transpose, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniformMatrix2fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
@@ -7584,12 +7544,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 2 * 2 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 2 * 2];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 2 * 2]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniformMatrix2fv (location, count, transpose, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniformMatrix2fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
@@ -7603,12 +7562,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 2 * 3 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 2 * 3];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 2 * 3]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniformMatrix2x3fv (location, count, transpose, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniformMatrix2x3fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
@@ -7623,12 +7581,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 2 * 3 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 2 * 3];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 2 * 3]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniformMatrix2x3fv (location, count, transpose, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniformMatrix2x3fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
@@ -7643,12 +7600,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 2 * 4 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 2 * 4];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 2 * 4]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniformMatrix2x4fv (location, count, transpose, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniformMatrix2x4fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
@@ -7663,12 +7619,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 2 * 4 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 2 * 4];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 2 * 4]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniformMatrix2x4fv (location, count, transpose, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniformMatrix2x4fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
@@ -7682,12 +7637,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 3 * 3 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 3 * 3];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 3 * 3]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniformMatrix3fv (location, count, transpose, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniformMatrix3fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
@@ -7700,12 +7654,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 3 * 3 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 3 * 3];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 3 * 3]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniformMatrix3fv (location, count, transpose, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniformMatrix3fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
@@ -7719,12 +7672,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 3 * 2 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 3 * 2];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 3 * 2]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniformMatrix3x2fv (location, count, transpose, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniformMatrix3x2fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
@@ -7739,12 +7691,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 3 * 2 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 3 * 2];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 3 * 2]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniformMatrix3x2fv (location, count, transpose, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniformMatrix3x2fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
@@ -7759,12 +7710,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 3 * 4 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 3 * 4];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 3 * 4]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniformMatrix3x4fv (location, count, transpose, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniformMatrix3x4fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
@@ -7779,12 +7729,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 3 * 4 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 3 * 4];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 3 * 4]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniformMatrix3x4fv (location, count, transpose, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniformMatrix3x4fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
@@ -7798,13 +7747,12 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 16;
-			GLfloat* dataCopy = new GLfloat[dataSize];
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[dataSize]);
 			// Ensure we copy the full data. _value is a pointer to the start of the array.
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize * sizeof(GLfloat));
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize * sizeof(GLfloat));
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniformMatrix4fv (location, count, transpose, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniformMatrix4fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
@@ -7817,12 +7765,11 @@ namespace lime {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 4 * 4 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 4 * 4];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 4 * 4]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniformMatrix4fv (location, count, transpose, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniformMatrix4fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
@@ -7836,12 +7783,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 4 * 2 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 4 * 2];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 4 * 2]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniformMatrix4x2fv (location, count, transpose, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniformMatrix4x2fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
@@ -7856,12 +7802,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 4 * 2 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 4 * 2];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 4 * 2]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniformMatrix4x2fv (location, count, transpose, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniformMatrix4x2fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
@@ -7876,12 +7821,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 4 * 3 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 4 * 3];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 4 * 3]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniformMatrix4x3fv (location, count, transpose, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniformMatrix4x3fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
@@ -7896,12 +7840,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = count * 4 * 3 * sizeof(GLfloat);
-			GLfloat* dataCopy = new GLfloat[count * 4 * 3];
-			memcpy(dataCopy, (void*)(uintptr_t)_value, dataSize);
+			std::unique_ptr<GLfloat[]> dataCopy (new GLfloat[count * 4 * 3]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)_value, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLfloat* dataCopy) {
 				glUniformMatrix4x3fv (location, count, transpose, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glUniformMatrix4x3fv (location, count, transpose, (GLfloat*)(uintptr_t)_value);
@@ -7926,7 +7869,7 @@ namespace lime {
 
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			return OpenGLBindings::renderThread->RunCommandAndWait<bool>([=] () {
+			return OpenGLBindings::renderThread->RunCommandAndWait<bool>(__func__, [=] () {
 				return glUnmapBuffer (target);
 			});
 		} else {
@@ -8112,12 +8055,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = 4 * sizeof(GLint);
-			GLint* dataCopy = new GLint[4];
-			memcpy(dataCopy, (void*)(uintptr_t)v, dataSize);
+			std::unique_ptr<GLint[]> dataCopy (new GLint[4]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)v, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLint* dataCopy) {
 				glVertexAttribI4iv (index, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glVertexAttribI4iv (index, (GLint*)(uintptr_t)v);
@@ -8132,12 +8074,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = 4 * sizeof(GLint);
-			GLint* dataCopy = new GLint[4];
-			memcpy(dataCopy, (void*)(uintptr_t)v, dataSize);
+			std::unique_ptr<GLint[]> dataCopy (new GLint[4]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)v, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLint* dataCopy) {
 				glVertexAttribI4iv (index, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glVertexAttribI4iv (index, (GLint*)(uintptr_t)v);
@@ -8182,12 +8123,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = 4 * sizeof(GLuint);
-			GLuint* dataCopy = new GLuint[4];
-			memcpy(dataCopy, (void*)(uintptr_t)v, dataSize);
+			std::unique_ptr<GLuint[]> dataCopy (new GLuint[4]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)v, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLuint* dataCopy) {
 				glVertexAttribI4uiv (index, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glVertexAttribI4uiv (index, (GLuint*)(uintptr_t)v);
@@ -8202,12 +8142,11 @@ namespace lime {
 		#ifdef LIME_GLES3_API
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
 			int dataSize = 4 * sizeof(GLuint);
-			GLuint* dataCopy = new GLuint[4];
-			memcpy(dataCopy, (void*)(uintptr_t)v, dataSize);
+			std::unique_ptr<GLuint[]> dataCopy (new GLuint[4]);
+			memcpy(dataCopy.get (), (void*)(uintptr_t)v, dataSize);
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (dataCopy), [=] (const GLuint* dataCopy) {
 				glVertexAttribI4uiv (index, dataCopy);
-				delete[] dataCopy;
 			});
 		} else {
 			glVertexAttribI4uiv (index, (GLuint*)(uintptr_t)v);
@@ -8246,12 +8185,11 @@ namespace lime {
 	void lime_gl_vertex_attrib1fv (int index, double v) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			GLfloat* vCopy = new GLfloat[1];
-			memcpy(vCopy, (void*)(uintptr_t)v, 1 * sizeof(GLfloat));
+			std::unique_ptr<GLfloat[]> vCopy (new GLfloat[1]);
+			memcpy(vCopy.get (), (void*)(uintptr_t)v, 1 * sizeof(GLfloat));
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (vCopy), [=] (const GLfloat* vCopy) {
 				glVertexAttrib1fv (index, vCopy);
-				delete[] vCopy;
 			});
 		} else {
 			glVertexAttrib1fv (index, (GLfloat*)(uintptr_t)v);
@@ -8263,12 +8201,11 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_vertex_attrib1fv) (int index, double v) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			GLfloat* vCopy = new GLfloat[1];
-			memcpy(vCopy, (void*)(uintptr_t)v, 1 * sizeof(GLfloat));
+			std::unique_ptr<GLfloat[]> vCopy (new GLfloat[1]);
+			memcpy(vCopy.get (), (void*)(uintptr_t)v, 1 * sizeof(GLfloat));
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (vCopy), [=] (const GLfloat* vCopy) {
 				glVertexAttrib1fv (index, vCopy);
-				delete[] vCopy;
 			});
 		} else {
 			glVertexAttrib1fv (index, (GLfloat*)(uintptr_t)v);
@@ -8306,12 +8243,11 @@ namespace lime {
 	void lime_gl_vertex_attrib2fv (int index, double v) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			GLfloat* vCopy = new GLfloat[2];
-			memcpy(vCopy, (void*)(uintptr_t)v, 2 * sizeof(GLfloat));
+			std::unique_ptr<GLfloat[]> vCopy (new GLfloat[2]);
+			memcpy(vCopy.get (), (void*)(uintptr_t)v, 2 * sizeof(GLfloat));
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (vCopy), [=] (const GLfloat* vCopy) {
 				glVertexAttrib2fv (index, vCopy);
-				delete[] vCopy;
 			});
 		} else {
 			glVertexAttrib2fv (index, (GLfloat*)(uintptr_t)v);
@@ -8323,12 +8259,11 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_vertex_attrib2fv) (int index, double v) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			GLfloat* vCopy = new GLfloat[2];
-			memcpy(vCopy, (void*)(uintptr_t)v, 2 * sizeof(GLfloat));
+			std::unique_ptr<GLfloat[]> vCopy (new GLfloat[2]);
+			memcpy(vCopy.get (), (void*)(uintptr_t)v, 2 * sizeof(GLfloat));
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (vCopy), [=] (const GLfloat* vCopy) {
 				glVertexAttrib2fv (index, vCopy);
-				delete[] vCopy;
 			});
 		} else {
 			glVertexAttrib2fv (index, (GLfloat*)(uintptr_t)v);
@@ -8366,12 +8301,11 @@ namespace lime {
 	void lime_gl_vertex_attrib3fv (int index, double v) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			GLfloat* vCopy = new GLfloat[3];
-			memcpy(vCopy, (void*)(uintptr_t)v, 3 * sizeof(GLfloat));
+			std::unique_ptr<GLfloat[]> vCopy (new GLfloat[3]);
+			memcpy(vCopy.get (), (void*)(uintptr_t)v, 3 * sizeof(GLfloat));
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (vCopy), [=] (const GLfloat* vCopy) {
 				glVertexAttrib3fv (index, vCopy);
-				delete[] vCopy;
 			});
 		} else {
 			glVertexAttrib3fv (index, (GLfloat*)(uintptr_t)v);
@@ -8383,12 +8317,11 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_vertex_attrib3fv) (int index, double v) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			GLfloat* vCopy = new GLfloat[3];
-			memcpy(vCopy, (void*)(uintptr_t)v, 3 * sizeof(GLfloat));
+			std::unique_ptr<GLfloat[]> vCopy (new GLfloat[3]);
+			memcpy(vCopy.get (), (void*)(uintptr_t)v, 3 * sizeof(GLfloat));
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (vCopy), [=] (const GLfloat* vCopy) {
 				glVertexAttrib3fv (index, vCopy);
-				delete[] vCopy;
 			});
 		} else {
 			glVertexAttrib3fv (index, (GLfloat*)(uintptr_t)v);
@@ -8426,12 +8359,11 @@ namespace lime {
 	void lime_gl_vertex_attrib4fv (int index, double v) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			GLfloat* vCopy = new GLfloat[4];
-			memcpy(vCopy, (void*)(uintptr_t)v, 4 * sizeof(GLfloat));
+			std::unique_ptr<GLfloat[]> vCopy (new GLfloat[4]);
+			memcpy(vCopy.get (), (void*)(uintptr_t)v, 4 * sizeof(GLfloat));
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (vCopy), [=] (const GLfloat* vCopy) {
 				glVertexAttrib4fv (index, vCopy);
-				delete[] vCopy;
 			});
 		} else {
 			glVertexAttrib4fv (index, (GLfloat*)(uintptr_t)v);
@@ -8443,12 +8375,11 @@ namespace lime {
 	HL_PRIM void HL_NAME(hl_gl_vertex_attrib4fv) (int index, double v) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			GLfloat* vCopy = new GLfloat[4];
-			memcpy(vCopy, (void*)(uintptr_t)v, 4 * sizeof(GLfloat));
+			std::unique_ptr<GLfloat[]> vCopy (new GLfloat[4]);
+			memcpy(vCopy.get (), (void*)(uintptr_t)v, 4 * sizeof(GLfloat));
 			
-			OpenGLBindings::renderThread->PushCommand ([=] () {
+			QueueGLBuffer (std::move (vCopy), [=] (const GLfloat* vCopy) {
 				glVertexAttrib4fv (index, vCopy);
-				delete[] vCopy;
 			});
 		} else {
 			glVertexAttrib4fv (index, (GLfloat*)(uintptr_t)v);
@@ -8460,6 +8391,7 @@ namespace lime {
 	void lime_gl_viewport (int x, int y, int width, int height) {
 
 		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
+			if (!OpenGLBindings::renderThread->RecordViewport (x, y, width, height)) return;
 			OpenGLBindings::renderThread->PushCommand ([=] () {
 				glViewport (x, y, width, height);
 			});
@@ -8472,13 +8404,7 @@ namespace lime {
 
 	HL_PRIM void HL_NAME(hl_gl_viewport) (int x, int y, int width, int height) {
 
-		if (OpenGLBindings::renderThread && OpenGLBindings::isMultiThreaded) {
-			OpenGLBindings::renderThread->PushCommand ([=] () {
-				glViewport (x, y, width, height);
-			});
-		} else {
-			glViewport (x, y, width, height);
-		}
+		lime_gl_viewport (x, y, width, height);
 
 	}
 
@@ -8702,6 +8628,7 @@ namespace lime {
 	DEFINE_PRIME3v (lime_gl_get_sync_parameteriv);
 	DEFINE_PRIME2 (lime_gl_get_tex_parameterf);
 	DEFINE_PRIME3v (lime_gl_get_tex_parameterfv);
+	DEFINE_PRIME3 (lime_gl_get_tex_level_parameteri);
 	DEFINE_PRIME2 (lime_gl_get_tex_parameteri);
 	DEFINE_PRIME3v (lime_gl_get_tex_parameteriv);
 	DEFINE_PRIME2 (lime_gl_get_transform_feedback_varying);
@@ -8766,6 +8693,7 @@ namespace lime {
 	DEFINE_PRIME2v (lime_gl_stencil_mask_separate);
 	DEFINE_PRIME3v (lime_gl_stencil_op);
 	DEFINE_PRIME4v (lime_gl_stencil_op_separate);
+	DEFINE_PRIME7 (lime_gl_queue_packed_texture_image_2d);
 	DEFINE_PRIME9v (lime_gl_tex_image_2d);
 	DEFINE_PRIME10v (lime_gl_tex_image_3d);
 	DEFINE_PRIME3v (lime_gl_tex_parameterf);

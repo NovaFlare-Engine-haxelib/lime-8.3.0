@@ -2427,6 +2427,59 @@ namespace lime {
 	}
 
 
+	#if defined(LIME_PNG) || defined(LIME_JPEG)
+	static value DecodeScaledImage (value data, value buffer, ImageDecodeScale& scale) {
+
+		Bytes bytes;
+		Resource resource;
+		if (val_is_string (data)) {
+			resource = Resource (val_string (data));
+		} else {
+			bytes.Set (data);
+			if (!bytes.b || bytes.length == 0) return alloc_null ();
+			resource = Resource (&bytes);
+		}
+
+		ImageBuffer imageBuffer (alloc_null ());
+		bool decoded = false;
+		#ifdef LIME_PNG
+		decoded = PNG::Decode (&resource, &imageBuffer, true, &scale);
+		#endif
+		#ifdef LIME_JPEG
+		if (!decoded && !scale.pngRecognized && !scale.allocationFailed) decoded = JPEG::Decode (&resource, &imageBuffer, true, &scale);
+		#endif
+		if (!decoded) return alloc_null ();
+
+		value result = alloc_empty_object ();
+		alloc_field (result, val_id ("buffer"), imageBuffer.Value (buffer));
+		alloc_field (result, val_id ("sourceWidth"), alloc_int (scale.sourceWidth));
+		alloc_field (result, val_id ("sourceHeight"), alloc_int (scale.sourceHeight));
+		return result;
+
+	}
+	#endif
+
+
+	value lime_image_load_scaled (value data, value buffer, value options) {
+
+		#if defined(LIME_PNG) || defined(LIME_JPEG)
+		if (val_is_null (data) || val_is_null (buffer) || val_is_null (options)) return alloc_null ();
+		ImageDecodeScale scale = {};
+		scale.maximum = val_int (val_field (options, val_id ("maximum")));
+		scale.threshold = val_int (val_field (options, val_id ("threshold")));
+		scale.ratio = val_number (val_field (options, val_id ("ratio")));
+		if (scale.maximum <= 0 && scale.ratio >= 1) return alloc_null ();
+
+		value result = DecodeScaledImage (data, buffer, scale);
+		if (scale.allocationFailed) val_throw (alloc_string ("Could not allocate resized image pixels"));
+		return result;
+		#else
+		return alloc_null ();
+		#endif
+
+	}
+
+
 	void lime_image_data_util_color_transform (value image, value rect, value colorMatrix) {
 
 		Image _image = Image (image);
@@ -4510,6 +4563,7 @@ namespace lime {
 	DEFINE_PRIME2 (lime_image_load);
 	DEFINE_PRIME2 (lime_image_load_bytes);
 	DEFINE_PRIME2 (lime_image_load_file);
+	DEFINE_PRIME3 (lime_image_load_scaled);
 	DEFINE_PRIME1v (lime_image_set_max_texture_size);
 	DEFINE_PRIME0 (lime_jni_getenv);
 	DEFINE_PRIME2v (lime_joystick_event_manager_register);

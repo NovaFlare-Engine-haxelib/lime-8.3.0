@@ -2,14 +2,15 @@
 #define LIME_GRAPHICS_RENDER_THREAD_H
 
 #include <SDL.h>
+#include <graphics/FrameTimeline.h>
 #include <mutex>
 #include <condition_variable>
 #include <functional>
 #include <thread>
 #include <future>
 #include <atomic>
+#include <chrono>
 #include <vector>
-#include <deque>
 #include <array>
 #include <cstddef>
 #include <new>
@@ -170,99 +171,157 @@ namespace lime {
 
     class RenderThread {
     public:
+        struct Submission {
+            Submission(bool wasAccepted = false, std::uint64_t batchId = 0)
+                : accepted(wasAccepted), batch(batchId) {}
+            bool accepted;
+            std::uint64_t batch;
+        };
+
         RenderThread();
         ~RenderThread();
 
-        void Start(SDL_Window* window, SDL_GLContext context);
+        void Start(SDL_Window* initialWindow, SDL_GLContext initialContext, int initialSwapInterval = 1);
         void Stop();
-        void Pause();
-        void Resume();
-        void RebindContext();
-        void SetContext(SDL_GLContext context);
+        bool PauseAndReleaseContext(int timeoutMS);
+        bool RequestContextRelease();
+        bool ResumeAndAcquireContext(int timeoutMS);
+        bool CanAcquireContext();
+        bool SetContext(SDL_GLContext newContext);
+        void SetSubmissionEnabled(bool enabled);
+        bool RecordViewport(int x, int y, int width, int height);
+        bool RecordActiveTexture(bool textureZero);
         
         template<typename Callable>
-        void PushCommand(Callable&& command) {
-            // Render submission is SPSC: only the stage thread appends to the
-            // current frame, and only the worker consumes submitted frames.
-            currentFrame->emplace_back(std::forward<Callable>(command));
+        bool PushCommand(Callable&& command) {
+            if (!IsApplicationThread() || !CanSubmit()) return false;
+            currentFrame->commands.emplace_back(std::forward<Callable>(command));
+            return true;
         }
-        void Flip(bool forceWait = false);
+        Submission Flip();
+        void BeginTimelinePhase() {
+#ifdef HX_WINDOWS
+            if (IsApplicationThread() && FrameTimeline::CurrentWork() && !currentFrame->commands.empty())
+                currentFrame->mixedTimelinePhase = true;
+#endif
+        }
         
         template<typename T>
-        T RunCommandAndWait(std::function<T()> command) {
-            if (IsRenderThread()) {
-                return command();
-            }
-            std::promise<T> promise;
-            std::future<T> future = promise.get_future();
-            PushCommand([&]() {
-                try {
-                    promise.set_value(command());
-                } catch (...) {
-                    promise.set_exception(std::current_exception());
-                }
-            });
-            Flip(true);
-            return future.get();
+        T RunCommandAndWait(const char* operation, std::function<T()> command) {
+            return ExecuteCommandAndWait(operation, std::move(command), [] { return T(); });
         }
 
-        bool IsRenderThread();
-        bool IsRunning() { return running; }
-        void MakeCurrent();
-        void SetSwapInterval(int interval);
+        template<typename T>
+        T RunCommandAndWaitOr(const char* operation, std::function<T()> command, T failureValue) {
+            return ExecuteCommandAndWait(operation, std::move(command), [&failureValue] { return std::move(failureValue); });
+        }
+
+        bool IsRenderThread() const;
+        bool IsRunning() const { return running; }
+#ifdef ANDROID
+        void WaitForPendingFrames(std::chrono::nanoseconds timeout);
+#endif
+        bool MakeCurrent();
+        bool SetSwapInterval(int interval, bool useWorker = false);
+        bool ApplySwapInterval();
+        bool SetCurrentSwapInterval(int interval);
+        int ConfiguredSwapInterval() const { return swapInterval.load(); }
+        int CurrentSwapInterval() const { return currentSwapInterval.load(); }
+        std::uint64_t SwapIntervalRevision() const { return swapIntervalRevision.load(std::memory_order_relaxed); }
         bool WaitForContext(bool held, int timeoutMS);
-        
+
         static constexpr int MaxPendingFrames = 2;
         static std::atomic<int> activePendingFrames;
-        static std::atomic<bool> hasPendingRenderRequest;
-        std::atomic<bool> contextHeld;
-        
-        // Flags for conditional notify to reduce lock contention
-        std::atomic<bool> workerWaiting;
-        std::atomic<bool> mainWaiting;
 
     private:
+        template<typename T, typename OnUnavailable>
+        T ExecuteCommandAndWait(const char* operation, std::function<T()> command, OnUnavailable onUnavailable) {
+            if (IsRenderThread()) return command();
+            if (!IsApplicationThread() || !CanSubmit()) return onUnavailable();
+
+            FrameTimeline::Span wait(FrameTimeline::SyncEvent(), FrameTimeline::CurrentWork(), operation);
+            // Dropping an unstarted batch destroys the task and wakes its waiter.
+            std::packaged_task<T()> task(std::move(command));
+            auto future = task.get_future();
+            currentFrame->commands.emplace_back(std::move(task));
+            const Submission submission = SubmitFrame(true);
+            if (!submission.accepted) {
+                currentFrame->commands.pop_back();
+                return onUnavailable();
+            }
+
+            wait.SetBatch(submission.batch);
+            try {
+                return future.get();
+            } catch (const std::future_error& error) {
+                if (error.code() != std::make_error_code(std::future_errc::broken_promise)) throw;
+                return onUnavailable();
+            }
+        }
+
+        enum class ContextState { Released, Acquiring, Held, Releasing };
+        using Deadline = std::chrono::steady_clock::time_point;
+
         void Run();
+        bool IsApplicationThread() const;
+        bool IsContextCurrent() const;
+        bool CanSubmit(bool draining = false) const;
+        bool WorkerContextIs(bool held) const;
+        bool RequestContextRelease(Deadline deadline);
+        bool WaitForWorkerContext(std::unique_lock<std::mutex>& lock, bool held, Deadline deadline);
+        void ChangeWorkerContext(std::unique_lock<std::mutex>& lock, bool acquire);
+        Submission SubmitFrame(bool synchronous, Deadline deadline = (Deadline::max)(), bool draining = false);
 
         SDL_Window* window;
         SDL_GLContext context;
-        std::thread* workerThread;
-        std::atomic<bool> running;
-        std::atomic<bool> paused;
+        std::thread workerThread;
+        const std::thread::id applicationThread;
+        std::atomic<bool> running{false};
+        std::atomic<bool> submissionEnabled{true};
+        std::atomic<bool> contextRequested{false};
+        std::atomic<ContextState> contextState{ContextState::Released};
+        bool contextError = false;
         std::atomic<int> swapInterval;
+        std::atomic<int> currentSwapInterval{0};
+        std::atomic<std::uint64_t> swapIntervalRevision{0};
         
         std::condition_variable condition;
         std::mutex mutex;
+        std::mutex workerMutex;
         
         // Use pointers to vectors to avoid copying and enable lightweight swapping
-        using Frame = std::vector<RenderCommand>;
+        struct Frame {
+            std::vector<RenderCommand> commands;
+            std::array<int, 4> viewport{};
+            bool viewportRecorded = false;
+            bool textureZeroRecorded = false;
+
+            void ResetRecordedGLState() {
+                viewportRecorded = false;
+                textureZeroRecorded = false;
+            }
+#ifdef HX_WINDOWS
+            std::uint64_t timelineId = 0;
+            std::uint64_t timelineBatch = 0;
+            std::uint64_t submittedAt = 0;
+            int queueDepth = 0;
+            bool synchronization = false;
+            bool timelineUpdate = false;
+            bool mixedTimelinePhase = false;
+#endif
+#ifdef HX_ANDROID
+            std::uint64_t androidCycle = 0;
+            bool androidFinalSubmission = false;
+#endif
+        };
         
         LockFreeQueue<Frame*, 16> framePool;
         LockFreeQueue<Frame*, 16> pendingFrames;
         Frame* currentFrame;
-        
-        std::thread::id threadId;
-    };
 
-    template<>
-    inline void RenderThread::RunCommandAndWait<void>(std::function<void()> command) {
-         if (IsRenderThread()) {
-            command();
-            return;
-        }
-        std::promise<void> promise;
-        std::future<void> future = promise.get_future();
-        PushCommand([&]() {
-            try {
-                command();
-                promise.set_value();
-            } catch (...) {
-                promise.set_exception(std::current_exception());
-            }
-        });
-        Flip(true);
-        future.get();
-    }
+        Frame* WaitForFrame();
+        void ReturnFrame(Frame* frame);
+    };
 
 }
 

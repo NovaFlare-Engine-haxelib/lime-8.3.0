@@ -42,6 +42,10 @@ namespace lime {
 
 		private:
 
+			void ResetFrameDeadlines ();
+			void DispatchScheduledUpdate ();
+			bool TryDispatchRender (double periodMs);
+			void DispatchPendingRenderDeviceReset ();
 			void HandleEvent (SDL_Event* event);
 			void ProcessClipboardEvent (SDL_Event* event);
 			void ProcessDropEvent (SDL_Event* event);
@@ -63,21 +67,28 @@ namespace lime {
 
 			static SDLApplication* currentApplication;
 
-			bool active;
+			bool active = false;
 			bool lockRender;
+			bool windowRedrawRequested = false;
+#ifdef ANDROID
+			bool renderRetryRequested = false;
+#endif
+			bool renderDeviceResetPending = false;
 			ApplicationEvent applicationEvent;
 			ClipboardEvent clipboardEvent;
-			double currentUpdate;
 			double framePeriod;
 			double renderFramePeriod;
+			Uint64 performanceFrequency = 0;
+			Uint64 updatePeriodTicks = 0;
+			Uint64 renderPeriodTicks = 0;
+			Uint64 nextUpdateCounter = 0;
+			Uint64 nextRenderCounter = 0;
 			Uint32 initFlags;
 			DropEvent dropEvent;
 			GamepadEvent gamepadEvent;
 			JoystickEvent joystickEvent;
 			KeyEvent keyEvent;
-			double lastUpdate;
 			MouseEvent mouseEvent;
-			double nextUpdate;
 			OrientationEvent orientationEvent;
 			RenderEvent renderEvent;
 			SensorEvent sensorEvent;

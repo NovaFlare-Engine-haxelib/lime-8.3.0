@@ -4,6 +4,7 @@ extern "C" {
 	#include <sys/types.h>
 	#include <stdio.h>
 	#include <jpeglib.h>
+	#include <jerror.h>
 
 }
 
@@ -188,7 +189,50 @@ namespace lime {
 	};
 
 
-	bool JPEG::Decode (Resource *resource, ImageBuffer* imageBuffer, bool decodeData) {
+	static bool DecodeScaled (j_decompress_ptr decoder, ImageBuffer *imageBuffer, ImageDecodeScale& scale) {
+
+		if (decoder->jpeg_color_space == JCS_CMYK || decoder->jpeg_color_space == JCS_YCCK) return false;
+		decoder->out_color_space = JCS_RGB;
+		decoder->scale_num = 1;
+		for (decoder->scale_denom = 8; decoder->scale_denom > 1; decoder->scale_denom /= 2) {
+			jpeg_calc_output_dimensions (decoder);
+			if (decoder->output_width >= (JDIMENSION)scale.width && decoder->output_height >= (JDIMENSION)scale.height) break;
+		}
+
+		if (!jpeg_start_decompress (decoder)) return false;
+		int inputWidth = decoder->output_width;
+		int inputHeight = decoder->output_height;
+		if (decoder->output_components != 3 || inputWidth < scale.width || inputHeight < scale.height) return false;
+
+		JSAMPARRAY colorRow = decoder->mem->alloc_sarray ((j_common_ptr)decoder, JPOOL_IMAGE, inputWidth * 3, 1);
+		JSAMPARRAY rows = decoder->mem->alloc_sarray ((j_common_ptr)decoder, JPOOL_IMAGE, inputWidth * 4, 2);
+		JSAMPROW current = rows[0];
+		JSAMPROW previous = rows[1];
+		imageBuffer->Resize (scale.width, scale.height, 32);
+		if (!imageBuffer->data || !imageBuffer->data->buffer || !imageBuffer->data->buffer->b) {
+			scale.allocationFailed = true;
+			return false;
+		}
+		ScaleImageRows scaler (inputWidth, inputHeight, scale, imageBuffer->data->buffer->b);
+
+		for (int row = 0; row < inputHeight; row++) {
+			if (jpeg_read_scanlines (decoder, colorRow, 1) != 1) return false;
+			for (int column = 0; column < inputWidth; column++) {
+				memcpy (current + column * 4, colorRow[0] + column * 3, 3);
+				current[column * 4 + 3] = 255;
+			}
+			scaler.Read (previous, current, row);
+			std::swap (current, previous);
+		}
+		imageBuffer->format = BGRA32;
+		imageBuffer->premultiplied = true;
+		imageBuffer->transparent = false;
+		return jpeg_finish_decompress (decoder) && scaler.IsComplete ();
+
+	}
+
+
+	bool JPEG::Decode (Resource *resource, ImageBuffer* imageBuffer, bool decodeData, ImageDecodeScale *scale) {
 
 		struct jpeg_decompress_struct cinfo;
 
@@ -217,6 +261,7 @@ namespace lime {
 		}
 
 		if (setjmp (jpegError.on_error)) {
+			if (scale && jpegError.base.msg_code == JERR_OUT_OF_MEMORY) scale->allocationFailed = true;
 
 			if (file) {
 
@@ -268,7 +313,10 @@ namespace lime {
 
 		bool decoded = false;
 
-		if (jpeg_read_header (&cinfo, TRUE) == JPEG_HEADER_OK) {
+		int header = jpeg_read_header (&cinfo, TRUE);
+		if (header == JPEG_HEADER_OK && scale) {
+			decoded = decodeData && scale->SetTarget (cinfo.image_width, cinfo.image_height) && DecodeScaled (&cinfo, imageBuffer, *scale);
+		} else if (header == JPEG_HEADER_OK) {
 
 			switch (cinfo.jpeg_color_space) {
 

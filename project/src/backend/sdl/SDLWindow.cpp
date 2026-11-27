@@ -3,8 +3,10 @@
 #include "SDLApplication.h"
 #include "../../graphics/opengl/OpenGL.h"
 #include "../../graphics/opengl/OpenGLBindings.h"
-#include <graphics/PerformanceMonitor.h>
-#include <future>
+#include <graphics/FrameTimeline.h>
+#include <graphics/AndroidPerformanceHints.h>
+#include <cstdio>
+#include <cstring>
 
 #ifdef HX_WINDOWS
 #include <SDL_syswm.h>
@@ -16,109 +18,186 @@
 namespace lime {
 
 
-    std::vector<SDLWindow*> SDLWindow::windows;
+	static constexpr int ContextHandoffTimeoutMS = 450;
+	static constexpr int ContextStartupTimeoutMS = 5000;
+	static constexpr Uint64 ContextRecoveryIntervalMS = 100;
 
-	void SDLWindow::SetGLContext (SDL_GLContext context) {
-		this->context = context;
-		renderThread.SetContext (context);
+	std::vector<SDLWindow*> SDLWindow::windows;
+
+	bool SDLWindow::SetGLContext(SDL_GLContext restoredContext) {
+		if (renderThread.IsRunning() && !renderThread.SetContext(restoredContext)) return false;
+		context = restoredContext;
+		return true;
 	}
 
-    void SDLWindow::PauseRendering() {
-        for (auto window : windows) {
-            if (window->renderThread.IsRunning()) {
-                window->renderThread.Pause();
-            }
-        }
+	bool SDLWindow::MakeGLContextCurrent() {
+		if (!context || !sdlWindow) return false;
+		if (SDL_GL_GetCurrentWindow() == sdlWindow && SDL_GL_GetCurrentContext() == context) return true;
+		if (renderThread.IsRunning()) return renderThread.MakeCurrent();
+		return SDL_GL_MakeCurrent(sdlWindow, context) == 0;
+	}
 
-        // Android destroys the EGLSurface on its Java UI thread and waits for
-        // SDL's event thread to release the GL context first.  With Lime's GL
-        // worker enabled, SDL does not own that context until we explicitly
-        // hand it back here.
-        for (auto window : windows) {
-            if (!window->renderThread.IsRunning()) continue;
+	bool SDLWindow::ReleaseWorkerContext() {
+		return !renderThread.IsRunning() || renderThread.CanAcquireContext()
+			|| renderThread.PauseAndReleaseContext(ContextHandoffTimeoutMS);
+	}
 
-            if (!window->renderThread.WaitForContext(false, 450)) {
-                printf("SDLWindow::PauseRendering: Timed out waiting for the render thread to release its GL context\n");
-                continue;
-            }
-
-            if (window->sdlWindow && window->context
-                && SDL_GL_MakeCurrent(window->sdlWindow, window->context) < 0) {
-                printf("SDLWindow::PauseRendering: Failed to return GL context to SDL: %s\n", SDL_GetError());
-            }
-        }
-    }
-
-    void SDLWindow::ResumeRendering() {
-        // SDL may have recreated both the EGLSurface and EGLContext while the
-        // app was in the background.  Capture the context it restored on this
-        // thread before transferring ownership back to Lime's GL worker.
-        SDL_Window* currentWindow = SDL_GL_GetCurrentWindow();
-        SDL_GLContext currentContext = SDL_GL_GetCurrentContext();
-        bool contextTransferred = false;
-
-        for (auto window : windows) {
-            if (!window->renderThread.IsRunning()) continue;
-
-            if (currentContext && (!currentWindow || window->sdlWindow == currentWindow)) {
-                window->SetGLContext(currentContext);
-                contextTransferred = true;
-            }
-        }
-
-		// SetMultiThreaded(false) pauses the worker but deliberately leaves it
-		// running. In direct mode SDL restored the context on this (application)
-		// thread, so keep it here instead of handing it back to the paused worker.
-		if (!OpenGLBindings::isMultiThreaded) {
-			return;
+	void SDLWindow::SetContextRouting(bool directContextUsable, bool transferring) {
+		if (OpenGLBindings::renderThread == &renderThread) {
+			OpenGLBindings::SetContextRouting(directContextUsable, transferring);
 		}
+	}
 
-        if (contextTransferred) {
-            SDL_Window* releaseWindow = currentWindow;
-            if (!releaseWindow) {
-                for (auto window : windows) {
-                    if (window->renderThread.IsRunning()) {
-                        releaseWindow = window->sdlWindow;
-                        break;
-                    }
-                }
-            }
-
-            if (releaseWindow && SDL_GL_MakeCurrent(releaseWindow, NULL) < 0) {
-                printf("SDLWindow::ResumeRendering: Failed to release SDL's restored GL context: %s\n", SDL_GetError());
-            }
-        }
-
-        for (auto window : windows) {
-            if (window->renderThread.IsRunning()) {
-                window->renderThread.Resume();
-            }
-        }
-
-        for (auto window : windows) {
-            if (window->renderThread.IsRunning()
-                && !window->renderThread.WaitForContext(true, 450)) {
-                printf("SDLWindow::ResumeRendering: Timed out waiting for the render thread to acquire its GL context\n");
-            }
-        }
-    }
-
-	void SDLWindow::OnRenderDeviceReset() {
-		SDL_Window* currentWindow = SDL_GL_GetCurrentWindow ();
-		SDL_GLContext currentContext = SDL_GL_GetCurrentContext ();
-
-		if (!currentContext) return;
-
+	void SDLWindow::PauseRendering() {
+		// SDL saves the context on its event thread before Java destroys the surface.
 		for (auto window : windows) {
-			if (!currentWindow || window->sdlWindow == currentWindow) {
-				window->SetGLContext (currentContext);
-				if (OpenGLBindings::isMultiThreaded) {
-					window->renderThread.RebindContext ();
-				}
+			if (!window->sdlWindow || !window->context) continue;
+			const bool taken = window->ReleaseWorkerContext() && window->MakeGLContextCurrent();
+			window->SetContextRouting(taken, true);
+			if (!taken) {
+				printf("SDLWindow::PauseRendering: Failed to return the GL context to SDL\n");
 			}
 		}
 	}
 
+	void SDLWindow::ResumeRendering() {
+		SDL_Window* currentWindow = SDL_GL_GetCurrentWindow();
+		SDL_GLContext currentContext = SDL_GL_GetCurrentContext();
+		for (auto window : windows) {
+			if (!window->sdlWindow || !window->context) continue;
+			const bool isRestoredWindow = !currentWindow || currentWindow == window->sdlWindow;
+			window->ResumeGLContext(isRestoredWindow ? currentContext : nullptr);
+		}
+	}
+
+	void SDLWindow::ResumeGLContext(SDL_GLContext restoredContext) {
+		if (!ReleaseWorkerContext() || (restoredContext && restoredContext != context && !SetGLContext(restoredContext))) {
+			SetContextRouting(false, true);
+			printf("SDLWindow::ResumeRendering: Failed to adopt the restored GL context\n");
+			return;
+		}
+
+		if (!OpenGLBindings::WantsMultiThreaded() || !renderThread.IsRunning()) {
+			const bool direct = MakeGLContextCurrent();
+			if (direct) SetVSyncMode(renderThread.ConfiguredSwapInterval());
+			SetContextRouting(direct, !direct);
+			return;
+		}
+
+		if (SDL_GL_GetCurrentWindow() == sdlWindow && SDL_GL_MakeCurrent(sdlWindow, nullptr) < 0) {
+			const bool direct = MakeGLContextCurrent();
+			SetContextRouting(direct, !direct);
+			printf("SDLWindow::ResumeRendering: Failed to release SDL's GL context: %s\n", SDL_GetError());
+			return;
+		}
+
+		if (renderThread.ResumeAndAcquireContext(ContextHandoffTimeoutMS)) {
+			SetContextRouting(false, false);
+			return;
+		}
+
+		const bool direct = MakeGLContextCurrent();
+		SetContextRouting(direct, !direct);
+		printf("SDLWindow::ResumeRendering: Failed to give the GL context to the render thread\n");
+	}
+
+	void SDLWindow::RetryContextRecovery() {
+		if (OpenGLBindings::CanRender()) return;
+
+		for (auto window : windows) {
+			if (&window->renderThread == OpenGLBindings::renderThread && window->sdlWindow && window->context) {
+				window->TryRecoverGLContext();
+				return;
+			}
+		}
+	}
+
+	void SDLWindow::TryRecoverGLContext() {
+		const Uint64 now = SDL_GetTicks64();
+		if (now < nextContextRecoveryMS) return;
+		nextContextRecoveryMS = now + ContextRecoveryIntervalMS;
+
+		if (renderThread.IsRunning() && !renderThread.CanAcquireContext()) {
+			renderThread.RequestContextRelease();
+			return;
+		}
+
+		if (SDL_GL_GetCurrentWindow() == sdlWindow) {
+			const auto restoredContext = SDL_GL_GetCurrentContext();
+			if (restoredContext && restoredContext != context && !SetGLContext(restoredContext)) return;
+		}
+
+		if (!MakeGLContextCurrent()) return;
+		SetVSyncMode(renderThread.ConfiguredSwapInterval());
+		SetContextRouting(true, false);
+	}
+
+	void SDLWindow::OnRenderDeviceReset() {
+		SDL_Window* currentWindow = SDL_GL_GetCurrentWindow();
+		SDL_GLContext currentContext = SDL_GL_GetCurrentContext();
+		if (!currentWindow || !currentContext) return;
+
+		for (auto window : windows) {
+			if (window->sdlWindow == currentWindow && window->context != currentContext) {
+				window->ResumeGLContext(currentContext);
+				return;
+			}
+		}
+	}
+
+	void SDLWindow::StopRendering() {
+		for (auto window : windows) {
+			window->Close();
+		}
+	}
+
+	bool SDLWindow::InitializeOpenGL() {
+		if (!OpenGLBindings::Init()) return false;
+
+		#ifndef LIME_GLES
+		GLint majorVersion = 0;
+		glGetIntegerv(GL_MAJOR_VERSION, &majorVersion);
+		if (majorVersion < 2) {
+			const char* version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+			float versionNumber = 0.0f;
+			if (!version || (!std::strstr(version, "OpenGL ES")
+				&& (std::sscanf(version, "%f", &versionNumber) != 1 || versionNumber < 2.0f))) {
+				return false;
+			}
+		}
+		#elif defined(IPHONE) || defined(APPLETV)
+		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &OpenGLBindings::defaultFramebuffer);
+		glGetIntegerv(GL_RENDERBUFFER_BINDING, &OpenGLBindings::defaultRenderbuffer);
+		#endif
+
+		const int interval = (flags & WINDOW_FLAG_VSYNC) ? 1 : 0;
+		renderThread.SetCurrentSwapInterval(interval);
+		OpenGLBindings::BindRenderThread(&renderThread);
+
+		if (SDL_GL_MakeCurrent(sdlWindow, nullptr) < 0) {
+			const bool direct = MakeGLContextCurrent();
+			SetContextRouting(direct, !direct);
+			return direct;
+		}
+
+		renderThread.Start(sdlWindow, context, interval);
+		if (renderThread.WaitForContext(true, ContextStartupTimeoutMS)) {
+			if (OpenGLBindings::WantsMultiThreaded()) {
+				SetContextRouting(false, false);
+				return true;
+			}
+			if (ReleaseWorkerContext() && MakeGLContextCurrent()) {
+				SetContextRouting(true, false);
+				return true;
+			}
+		}
+
+		printf("SDLWindow::InitializeOpenGL: Failed to initialize render thread ownership\n");
+		renderThread.Stop();
+		const bool direct = MakeGLContextCurrent();
+		SetContextRouting(direct, !direct);
+		return direct;
+	}
 
 	static Cursor currentCursor = DEFAULT;
 
@@ -324,82 +403,11 @@ namespace lime {
 
 			// }
 
-			context = SDL_GL_CreateContext (sdlWindow);
-
-			if (context) {
-
-				// IMPORTANT: Bind RenderThread immediately before any GL logic starts
-				OpenGLBindings::BindRenderThread(&renderThread);
-				
-				SDL_GL_MakeCurrent (sdlWindow, NULL);
-				renderThread.Start (sdlWindow, context);
-				
-				std::promise<bool> initPromise;
-				auto initFuture = initPromise.get_future ();
-
-				renderThread.PushCommand ([&] () {
-					bool success = true;
-
-					if (flags & WINDOW_FLAG_VSYNC) {
-
-						renderThread.SetSwapInterval (1);
-
-					} else {
-
-						renderThread.SetSwapInterval (0);
-
-					}
-
-					OpenGLBindings::Init ();
-
-					#ifndef LIME_GLES
-
-					int version = 0;
-					glGetIntegerv (GL_MAJOR_VERSION, &version);
-
-					if (version == 0) {
-
-						float versionScan = 0;
-						sscanf ((const char*)glGetString (GL_VERSION), "%f", &versionScan);
-						version = versionScan;
-
-					}
-
-					if (version < 2 && !strstr ((const char*)glGetString (GL_VERSION), "OpenGL ES")) {
-
-						success = false;
-
-					}
-
-					#elif defined(IPHONE) || defined(APPLETV)
-
-					glGetIntegerv (GL_FRAMEBUFFER_BINDING, &OpenGLBindings::defaultFramebuffer);
-					glGetIntegerv (GL_RENDERBUFFER_BINDING, &OpenGLBindings::defaultRenderbuffer);
-
-					#endif
-
-					initPromise.set_value (success);
-
-				});
-				
-				renderThread.Flip();
-
-				// Use wait_for to check status without blocking indefinitely
-				if (initFuture.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {
-					// Fallback or exit?
-				} else {
-					if (!initFuture.get ()) {
-						renderThread.Stop ();
-						SDL_GL_DeleteContext (context);
-						context = NULL;
-					}
-				}
-
-			} else {
-
-				SDL_GL_DeleteContext (context);
-				context = NULL;
-
+			context = SDL_GL_CreateContext(sdlWindow);
+			if (context && !InitializeOpenGL()) {
+				OpenGLBindings::UnbindRenderThread(&renderThread);
+				SDL_GL_DeleteContext(context);
+				context = nullptr;
 			}
 
 		}
@@ -441,25 +449,7 @@ namespace lime {
 
 		}
 
-		renderThread.Stop ();
-
-		if (sdlWindow) {
-
-			SDL_DestroyWindow (sdlWindow);
-			sdlWindow = 0;
-
-		}
-
-		if (sdlRenderer) {
-
-			SDL_DestroyRenderer (sdlRenderer);
-
-		} else if (context) {
-
-			SDL_GL_DeleteContext (context);
-
-		}
-
+		Close();
 	}
 
 
@@ -504,11 +494,12 @@ namespace lime {
 
 	bool SDLWindow::SetVSyncMode (int mode) {
 
-		#if defined (SDL_VIDEO_DRIVER_OPENGL) || defined (SDL_H)
-		return SDL_GL_SetSwapInterval (mode) == 0;
-		#else
-		return false;
-		#endif
+		if (!sdlWindow || sdlRenderer || !context) return false;
+		if (renderThread.IsRunning()) {
+			return renderThread.SetSwapInterval(mode, OpenGLBindings::isMultiThreaded);
+		}
+		return SDL_GL_GetCurrentWindow() == sdlWindow && SDL_GL_GetCurrentContext() == context
+			&& renderThread.SetCurrentSwapInterval(mode);
 
 	}
 
@@ -521,17 +512,26 @@ namespace lime {
 	}
 
 
-void SDLWindow::Close () {
+	void SDLWindow::Close () {
+		OpenGLBindings::UnbindRenderThread(&renderThread);
+		renderThread.Stop();
 
-		renderThread.Stop ();
-
-		if (sdlWindow) {
-
-			SDL_DestroyWindow (sdlWindow);
-			sdlWindow = 0;
-
+		if (sdlTexture) {
+			SDL_DestroyTexture(sdlTexture);
+			sdlTexture = nullptr;
 		}
-
+		if (sdlRenderer) {
+			SDL_DestroyRenderer(sdlRenderer);
+			sdlRenderer = nullptr;
+		}
+		if (context) {
+			SDL_GL_DeleteContext(context);
+			context = nullptr;
+		}
+		if (sdlWindow) {
+			SDL_DestroyWindow(sdlWindow);
+			sdlWindow = nullptr;
+		}
 	}
 
 
@@ -552,27 +552,52 @@ void SDLWindow::Close () {
 	}
 
 
-	void SDLWindow::ContextFlip () {
-
-		if (context && !sdlRenderer) {
-
-			if (renderThread.IsRunning() && OpenGLBindings::isMultiThreaded) {
-			renderThread.PushCommand ([this] () {
-				SDL_GL_SwapWindow (sdlWindow);
-				PerformanceMonitor::Instance().EndFrame();
-			});
-			renderThread.Flip();
-		} else {
-				SDL_GL_SwapWindow (sdlWindow);
-				PerformanceMonitor::Instance().EndFrame();
+	static void SwapGLWindow(SDL_Window* window, const RenderThread& thread, std::uint64_t frame) {
+		if (frame) {
+			FrameTimeline::EndGpu(frame);
+			static thread_local SDL_GLContext reportedContext = nullptr;
+			static thread_local SDL_Window* reportedWindow = nullptr;
+			static thread_local std::uint64_t reportedRevision = 0;
+			SDL_GLContext context = SDL_GL_GetCurrentContext();
+			const auto revision = thread.SwapIntervalRevision();
+			const bool contextChanged = context != reportedContext || window != reportedWindow;
+			if (context && (contextChanged || revision != reportedRevision)) {
+				reportedContext = context;
+				reportedWindow = window;
+				reportedRevision = revision;
+				if (contextChanged) FrameTimeline::WindowGeometry(window, frame);
+				const int interval = SDL_GL_GetSwapInterval();
+				const auto now = FrameTimeline::Now();
+				const char* mode = interval < 0 ? "adaptive" : interval == 0 ? "immediate" : "vsync";
+				FrameTimeline::Write({"swap_interval", frame, now, now,
+					static_cast<std::uint64_t>(interval < 0 ? -interval : interval), 0, mode});
 			}
-
-		} else if (sdlRenderer) {
-
-			SDL_RenderPresent (sdlRenderer);
-
+			FrameTimeline::Span duration("sdl_gl_swap", frame);
+			SDL_GL_SwapWindow(window);
+			return;
 		}
+		AndroidPerformanceHints::BeforeSwap();
+		SDL_GL_SwapWindow(window);
+		AndroidPerformanceHints::AfterSwap();
+	}
 
+	void SDLWindow::ContextFlip () {
+		if (context && !sdlRenderer) {
+			const bool threaded = renderThread.IsRunning() && OpenGLBindings::isMultiThreaded;
+			const auto frame = FrameTimeline::CurrentRender();
+			FrameTimeline::EndCommands(threaded);
+			if (threaded) {
+				if (renderThread.PushCommand([this, frame]() {
+					SwapGLWindow(sdlWindow, renderThread, frame);
+				})) {
+					renderThread.Flip();
+				}
+			} else if (SDL_GL_GetCurrentWindow() == sdlWindow) {
+				SwapGLWindow(sdlWindow, renderThread, frame);
+			}
+		} else if (sdlRenderer) {
+			SDL_RenderPresent(sdlRenderer);
+		}
 	}
 
 

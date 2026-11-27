@@ -12,7 +12,11 @@ namespace lime {
 
 			static bool Init ();
 			static void BindRenderThread (RenderThread* thread);
+			static void UnbindRenderThread (RenderThread* thread);
 			static void SetMultiThreaded (bool enabled);
+			static bool WantsMultiThreaded ();
+			static bool CanRender ();
+			static void SetContextRouting (bool directContextUsable, bool transferring);
 
 			static int defaultFramebuffer;
 			static int defaultRenderbuffer;

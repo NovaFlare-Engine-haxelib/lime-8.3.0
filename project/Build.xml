@@ -62,8 +62,12 @@
 			<compilerflag value="-DTRACY_ON_DEMAND" if="HXCPP_TRACY_ON_DEMAND" />
 		</section>
 
-		<file name="src/ExternalInterface.cpp" />
-		<file name="src/compat/LimeCompat.cpp" />
+		<file name="src/ExternalInterface.cpp">
+			<depend name="include/graphics/RenderThread.h" />
+		</file>
+		<file name="src/compat/LimeCompat.cpp">
+			<depend name="include/graphics/RenderThread.h" />
+		</file>
 
 		<section if="LIME_CAIRO">
 
@@ -206,7 +210,9 @@
 			<compilerflag value="-DLIME_OPENGL" />
 			<compilerflag value="-I${DEVELOPER_DIR}/Platforms/AppleTVOS.platform/Developer/SDKs/AppleTVOS${TVOS_VER}.sdk/" if="tvos" />
 
-			<file name="src/graphics/opengl/OpenGLBindings.cpp" />
+			<file name="src/graphics/opengl/OpenGLBindings.cpp">
+				<depend name="include/graphics/RenderThread.h" />
+			</file>
 
 		</section>
 
@@ -266,13 +272,19 @@
 			<compilerflag value="-DAPPLETV" if="tvos" />
 			<compilerflag value="-DHAVE_STDIO_H" unless="windows" />
 
-			<file name="src/backend/sdl/SDLApplication.cpp" />
+			<file name="src/backend/sdl/SDLApplication.cpp">
+				<depend name="src/backend/sdl/SDLApplication.h" />
+				<depend name="include/graphics/RenderThread.h" />
+			</file>
 			<file name="src/backend/sdl/SDLGamepad.cpp" />
 			<file name="src/backend/sdl/SDLJoystick.cpp" />
 			<file name="src/backend/sdl/SDLKeyCode.cpp" />
 			<file name="src/backend/sdl/SDLMutex.cpp" />
 			<file name="src/backend/sdl/SDLSystem.cpp" />
-			<file name="src/backend/sdl/SDLWindow.cpp" />
+			<file name="src/backend/sdl/SDLWindow.cpp">
+				<depend name="src/backend/sdl/SDLApplication.h" />
+				<depend name="include/graphics/RenderThread.h" />
+			</file>
 
 		</section>
 
@@ -309,7 +321,11 @@
 		<file name="src/graphics/Image.cpp" />
 		<file name="src/graphics/ImageBuffer.cpp" />
 		<file name="src/graphics/RenderEvent.cpp" />
-		<file name="src/graphics/RenderThread.cpp" />
+		<file name="src/graphics/RenderThread.cpp">
+			<depend name="include/graphics/RenderThread.h" />
+		</file>
+		<file name="src/graphics/FrameTimeline.cpp" />
+		<file name="src/graphics/AndroidPerformanceHints.cpp" if="android" />
 		<file name="src/graphics/SharedBufferManager.cpp" />
 		<file name="src/graphics/PerformanceMonitor.cpp" />
 		<file name="src/graphics/utils/ImageDataUtil.cpp" />
@@ -389,6 +405,7 @@
 	<target id="lime" output="${LIBPREFIX}lime${DEBUGEXTRA}${LIBSUFFIX}" tool="linker" toolid="${STD_MODULE_LINK}">
 
 		<outdir name="${OUTPUT_DIR}/${BINDIR}" />
+		<depend name="${HXCPP}/toolchain/android-toolchain-clang.xml" if="android HXCPP_ARM64 || android HXCPP_X86_64" unless="static_link" />
 
 		<files id="lime" />
 		<files id="android-cpufeatures" if="android" />

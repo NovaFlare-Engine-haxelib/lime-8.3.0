@@ -74,6 +74,9 @@ namespace lime {
 			bool active = false;
 			bool lockRender;
 			bool windowRedrawRequested = false;
+#ifdef ANDROID
+			bool renderRetryRequested = false;
+#endif
 			bool renderDeviceResetPending = false;
 			ApplicationEvent applicationEvent;
 			ClipboardEvent clipboardEvent;

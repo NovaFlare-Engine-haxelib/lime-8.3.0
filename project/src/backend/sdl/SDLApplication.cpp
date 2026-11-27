@@ -92,8 +92,12 @@ namespace lime {
 	}
 
 	static Uint64 AdvanceFrameDeadline (Uint64 deadline, Uint64 period, Uint64 now) {
+#ifdef ANDROID
+		return now + (period - (now - deadline) % period);
+#else
 		const auto next = deadline + period;
 		return next > now ? next : now + period;
+#endif
 	}
 
 	#if !defined(IPHONE) && !defined(EMSCRIPTEN)
@@ -297,11 +301,24 @@ namespace lime {
 			#endif
 			if (pending >= pendingLimit) {
 				FrameTimeline::RenderBlocked (pending);
-				if (lockRender && pendingLimit == 1) windowRedrawRequested = true;
+				if (lockRender && pendingLimit == 1) {
+#ifdef ANDROID
+					renderRetryRequested = true;
+#else
+					windowRedrawRequested = true;
+#endif
+				}
 				return false;
 			}
 		}
 
+#ifdef ANDROID
+		if (renderRetryRequested) {
+			renderRetryRequested = false;
+			// A late retry consumes a draw slot. Leave a full period before the next scheduled draw.
+			nextRenderCounter = SDL_GetPerformanceCounter () + renderPeriodTicks;
+		}
+#endif
 		windowRedrawRequested = false;
 		renderEvent.type = RENDER;
 		DispatchScheduledRender (&renderEvent, periodMs);
@@ -532,6 +549,9 @@ namespace lime {
 		renderPeriodTicks = FramePeriodTicks (renderFramePeriod, performanceFrequency);
 		nextUpdateCounter = now + updatePeriodTicks;
 		nextRenderCounter = now + renderPeriodTicks;
+#ifdef ANDROID
+		renderRetryRequested = false;
+#endif
 
 	}
 
@@ -1105,6 +1125,9 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 		frameRate = FrameRateOverride ("NOVAFLARE_DRAW_RATE", frameRate);
 		#endif
 		renderFramePeriod = frameRate > 0 ? 1000.0 / frameRate : 1000.0;
+#ifdef ANDROID
+		renderRetryRequested = false;
+#endif
 		if (performanceFrequency) {
 			renderPeriodTicks = FramePeriodTicks (renderFramePeriod, performanceFrequency);
 			nextRenderCounter = SDL_GetPerformanceCounter () + renderPeriodTicks;
@@ -1124,6 +1147,9 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 		}
 		#endif
 		lockRender = split;
+#ifdef ANDROID
+		renderRetryRequested = false;
+#endif
 		TraceFrameSetting("split_render", split ? 1 : 0);
 		if (split && performanceFrequency) nextRenderCounter = SDL_GetPerformanceCounter () + renderPeriodTicks;
 
@@ -1169,12 +1195,28 @@ void SDLApplication::ProcessTextEvent (SDL_Event* event) {
 			TryDispatchRender (renderFramePeriod);
 		}
 
-		if (windowRedrawRequested && TryDispatchRender (lockRender ? renderFramePeriod : framePeriod)) return active;
+		if ((windowRedrawRequested
+#ifdef ANDROID
+			|| renderRetryRequested
+#endif
+			) && TryDispatchRender (lockRender ? renderFramePeriod : framePeriod)) return active;
 
 		#if !defined(IPHONE) && !defined(EMSCRIPTEN)
 		if (active && !updateDue && !renderDue) {
 			const auto deadline = lockRender && nextRenderCounter < nextUpdateCounter
 				? nextRenderCounter : nextUpdateCounter;
+#ifdef ANDROID
+			auto* thread = OpenGLBindings::renderThread;
+			if (renderRetryRequested && lockRender && !inBackground &&
+				OpenGLBindings::CanRender() && OpenGLBindings::isMultiThreaded &&
+				thread && thread->IsRunning() && thread->CurrentSwapInterval() != 0) {
+				const auto waitStart = SDL_GetPerformanceCounter();
+				if (deadline > waitStart) {
+					const auto nanoseconds = (deadline - waitStart) * 1000000000ULL / performanceFrequency;
+					thread->WaitForPendingFrames(std::chrono::nanoseconds(nanoseconds));
+				}
+			} else
+#endif
 			WaitForFrameDeadline (deadline, performanceFrequency);
 		}
 		#endif

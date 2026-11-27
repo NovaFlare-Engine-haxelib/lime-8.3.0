@@ -14,6 +14,10 @@
 #include <string>
 #include <vector>
 #include <cstdio>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
 
 #ifdef NEED_EXTENSIONS
 #define DEFINE_EXTENSION
@@ -116,6 +120,763 @@ namespace lime {
 			if (copy) memcpy (copy.get (), reinterpret_cast<const void*> (static_cast<uintptr_t> (address)), length);
 			else SDL_LogError (SDL_LOG_CATEGORY_RENDER, "Could not allocate %d bytes for a GL command", length);
 			return copy;
+		}
+
+		constexpr int quadVertexFloats = 16;
+		constexpr int quadBytes = quadVertexFloats * sizeof(float);
+		static_assert(sizeof(float) == 4, "Quad vertices require 32-bit floats");
+
+		template<typename Element>
+		bool CopyQuadArray (const Element* source, int count, std::vector<Element>& target) {
+			if (count == 0) return true;
+			if (source == nullptr || count < 0) return false;
+			target.assign (source, source + count);
+			return true;
+		}
+
+		struct QuadPoint {
+			double x;
+			double y;
+		};
+
+		struct QuadTransform {
+			double horizontalX = 1.0;
+			double horizontalY = 0.0;
+			double verticalX = 0.0;
+			double verticalY = 1.0;
+
+			void SetBasis (const double* values) {
+				horizontalX = values[0];
+				horizontalY = values[1];
+				verticalX = values[2];
+				verticalY = values[3];
+			}
+
+			void WriteVertex (float* vertex, const QuadPoint& position, const QuadPoint& origin, const QuadPoint& texture) const {
+				vertex[0] = static_cast<float> (position.x * horizontalX + position.y * verticalX + origin.x);
+				vertex[1] = static_cast<float> (position.x * horizontalY + position.y * verticalY + origin.y);
+				vertex[2] = static_cast<float> (texture.x);
+				vertex[3] = static_cast<float> (texture.y);
+			}
+		};
+
+		class QuadBufferBatch {
+		public:
+			bool Snapshot (value source, int remainingQuads) {
+				if (!val_is_object (source)) return false;
+				static const int rectsField = val_id ("rects");
+				static const int indicesField = val_id ("indices");
+				static const int transformsField = val_id ("transforms");
+				static const int bitmapWidthField = val_id ("bitmapWidth");
+				static const int bitmapHeightField = val_id ("bitmapHeight");
+
+				const value rectangles = val_field (source, rectsField);
+				const value indices = val_field (source, indicesField);
+				const value transforms = val_field (source, transformsField);
+				const value width = val_field (source, bitmapWidthField);
+				const value height = val_field (source, bitmapHeightField);
+				const bool indexed = !val_is_null (indices);
+				const bool transformed = !val_is_null (transforms);
+				if (!val_is_array (rectangles) || (indexed && !val_is_array (indices))
+					|| (transformed && !val_is_array (transforms)) || !val_is_int (width) || !val_is_int (height)) return false;
+
+				bitmapWidth = val_int (width);
+				bitmapHeight = val_int (height);
+				const int rectangleCount = val_array_size (rectangles) / 4;
+				quadCount = indexed ? val_array_size (indices) : rectangleCount;
+				if (bitmapWidth <= 0 || bitmapHeight <= 0 || rectangleCount < 0
+					|| quadCount < 0 || quadCount > remainingQuads) return false;
+				if (quadCount == 0) return true;
+
+				const int transformFieldsPerQuad = transformed ? val_array_size (transforms) / quadCount : 0;
+				transformStride = transformFieldsPerQuad >= 6 ? 6 : transformFieldsPerQuad >= 4 ? 4 : transformFieldsPerQuad >= 2 ? 2 : 0;
+				return CopyQuadArray (val_array_double (rectangles), rectangleCount * 4, rectangleSnapshot)
+					&& (!indexed || CopyQuadArray (val_array_int (indices), quadCount, indexSnapshot))
+					&& (transformStride == 0 || CopyQuadArray (val_array_double (transforms), quadCount * transformStride, transformSnapshot));
+			}
+
+			int Count () const { return quadCount; }
+
+			void Expand (QuadTransform& matrix, float* destination) const {
+				for (int slot = 0; slot < quadCount; ++slot) {
+					const int index = indexSnapshot.empty () ? slot : indexSnapshot[slot];
+					if (index < 0 || static_cast<std::size_t> (index) >= rectangleSnapshot.size () / 4) {
+						std::fill_n (destination, quadVertexFloats, 0.0f);
+					} else {
+						ExpandQuad (&rectangleSnapshot[static_cast<std::size_t> (index) * 4], slot, matrix, destination);
+					}
+					destination += quadVertexFloats;
+				}
+			}
+
+		private:
+			void ExpandQuad (const double* rectangle, int slot, QuadTransform& matrix, float* destination) const {
+				const double width = rectangle[2];
+				const double height = rectangle[3];
+				if (width <= 0.0 || height <= 0.0) {
+					std::fill_n (destination, quadVertexFloats, 0.0f);
+					return;
+				}
+
+				const double x = rectangle[0];
+				const double y = rectangle[1];
+				double translatedX = x;
+				double translatedY = y;
+				if (transformStride > 0) {
+					const double* transform = &transformSnapshot[static_cast<std::size_t> (slot) * transformStride];
+					if (transformStride >= 4) matrix.SetBasis (transform);
+					if (transformStride == 2 || transformStride == 6) {
+						translatedX = transform[transformStride - 2];
+						translatedY = transform[transformStride - 1];
+					}
+				}
+
+				const double u0 = x / bitmapWidth;
+				const double v0 = y / bitmapHeight;
+				const double u1 = (x + width) / bitmapWidth;
+				const double v1 = (y + height) / bitmapHeight;
+				const QuadPoint origin {translatedX, translatedY};
+				matrix.WriteVertex (destination, {0.0, 0.0}, origin, {u0, v0});
+				matrix.WriteVertex (destination + 4, {width, 0.0}, origin, {u1, v0});
+				matrix.WriteVertex (destination + 8, {0.0, height}, origin, {u0, v1});
+				matrix.WriteVertex (destination + 12, {width, height}, origin, {u1, v1});
+			}
+
+			std::vector<double> rectangleSnapshot;
+			std::vector<int> indexSnapshot;
+			std::vector<double> transformSnapshot;
+			int quadCount = 0;
+			int transformStride = 0;
+			int bitmapWidth = 0;
+			int bitmapHeight = 0;
+		};
+
+		struct QuadBufferUpload {
+			std::vector<QuadBufferBatch> batches;
+			std::unique_ptr<float[]> vertices;
+			std::uint64_t frame = 0;
+			const char* phase = "render";
+			int quadCount = 0;
+			GLenum usage = GL_STATIC_DRAW;
+
+			void operator() () {
+				const auto started = frame ? FrameTimeline::Now () : 0;
+				QuadTransform matrix;
+				float* destination = vertices.get ();
+				for (const auto& batch : batches) {
+					batch.Expand (matrix, destination);
+					destination += batch.Count () * quadVertexFloats;
+				}
+
+				const int byteLength = quadCount * quadBytes;
+				glBufferData (GL_ARRAY_BUFFER, byteLength, vertices.get (), usage);
+				if (started) FrameTimeline::Write ({"quad_buffer_upload", frame, started, FrameTimeline::Now (),
+					static_cast<std::uint64_t> (quadCount), static_cast<std::uint64_t> (byteLength), "worker", 0, phase});
+			}
+		};
+
+		bool QuadBufferUploadEnabled () {
+			const char* configured = std::getenv ("NOVAFLARE_QUAD_UPLOAD");
+			return !configured || std::strcmp (configured, "0") != 0;
+		}
+
+		class MeshUploadTarget {
+		public:
+			static bool Accepts (int count, int floatsPerItem) {
+				return count > 0 && count <= (std::numeric_limits<int>::max) () / (floatsPerItem * static_cast<int> (sizeof (float)));
+			}
+
+			bool Prepare (int count, int floatsPerItem, GLenum bufferUsage) {
+				if (!Accepts (count, floatsPerItem)) return false;
+				const int floatCount = count * floatsPerItem;
+				vertices.reset (new (std::nothrow) float[floatCount]);
+				if (!vertices) return false;
+				items = count;
+				byteLength = floatCount * sizeof (float);
+				usage = bufferUsage;
+				frame = FrameTimeline::CurrentWork ();
+				phase = FrameTimeline::IsUpdate () ? "update" : "render";
+				return true;
+			}
+
+			float* Data () const { return vertices.get (); }
+			std::uint64_t Begin () const { return frame ? FrameTimeline::Now () : 0; }
+
+			void Upload (const char* event, std::uint64_t started) const {
+				glBufferData (GL_ARRAY_BUFFER, byteLength, Data (), usage);
+				if (started) FrameTimeline::Write ({event, frame, started, FrameTimeline::Now (),
+					static_cast<std::uint64_t> (items), static_cast<std::uint64_t> (byteLength), "worker", 0, phase});
+			}
+
+		private:
+			std::unique_ptr<float[]> vertices;
+			GLenum usage = GL_STATIC_DRAW;
+			int items = 0;
+			int byteLength = 0;
+			std::uint64_t frame = 0;
+			const char* phase = "render";
+		};
+
+		class TriangleBufferBatch {
+		public:
+			bool Snapshot (value source, int remaining, int vertexSize) {
+				if (!val_is_object (source)) return false;
+				static const int verticesField = val_id ("vertices");
+				static const int indicesField = val_id ("indices");
+				static const int uvtDataField = val_id ("uvtData");
+				const value coordinates = val_field (source, verticesField);
+				const value elementIndices = val_field (source, indicesField);
+				const value uvt = val_field (source, uvtDataField);
+				if (!val_is_array (coordinates)) return false;
+				const int coordinateCount = val_array_size (coordinates);
+				if (coordinateCount == 0 || coordinateCount % 2 != 0) return false;
+				const int sourceCount = coordinateCount / 2;
+				if (!SnapshotIndices (elementIndices, sourceCount, remaining) || !SnapshotTexture (source, uvt, sourceCount, vertexSize)) return false;
+				return CopyQuadArray (val_array_double (coordinates), coordinateCount, positions);
+			}
+
+			int Count () const { return vertexCount; }
+
+			void Expand (float* destination, int vertexSize) const {
+				const QuadPoint extent = ImplicitTextureExtent ();
+				for (int slot = 0; slot < vertexCount; ++slot) {
+					const int index = indices.empty () ? slot : indices[slot];
+					const double* position = positions.data () + 2 * index;
+					const QuadPoint uv = TextureCoordinates (index, position, extent);
+					if (vertexSize == 6) {
+						const double perspective = textureValues[3 * index + 2];
+						destination[0] = static_cast<float> (position[0] / perspective);
+						destination[1] = static_cast<float> (position[1] / perspective);
+						destination[2] = 0;
+						destination[3] = static_cast<float> (1.0 / perspective);
+					} else {
+						destination[0] = static_cast<float> (position[0]);
+						destination[1] = static_cast<float> (position[1]);
+					}
+					destination[vertexSize - 2] = static_cast<float> (uv.x);
+					destination[vertexSize - 1] = static_cast<float> (uv.y);
+					destination += vertexSize;
+				}
+			}
+
+		private:
+			bool SnapshotIndices (value source, int sourceCount, int remaining) {
+				const bool indexed = !val_is_null (source);
+				if (indexed && !val_is_array (source)) return false;
+				vertexCount = indexed ? val_array_size (source) : sourceCount;
+				if (vertexCount <= 0 || vertexCount > remaining) return false;
+				if (!indexed) return true;
+				if (!CopyQuadArray (val_array_int (source), vertexCount, indices)) return false;
+				return std::all_of (indices.begin (), indices.end (), [sourceCount] (int index) {
+					return index >= 0 && index < sourceCount;
+				});
+			}
+
+			bool SnapshotTexture (value source, value uvt, int sourceCount, int vertexSize) {
+				if (!val_is_null (uvt)) {
+					if (!val_is_array (uvt)) return false;
+					const int suppliedStride = val_array_size (uvt) / sourceCount;
+					textureStride = vertexSize == 6 ? 3 : 2;
+					if (suppliedStride < textureStride || (vertexSize == 4 && suppliedStride >= 3)) return false;
+					return CopyQuadArray (val_array_double (uvt), sourceCount * textureStride, textureValues);
+				}
+				if (vertexSize != 4) return false;
+				static const int bitmapWidthField = val_id ("bitmapWidth");
+				static const int bitmapHeightField = val_id ("bitmapHeight");
+				const value width = val_field (source, bitmapWidthField);
+				const value height = val_field (source, bitmapHeightField);
+				if (!val_is_int (width) || !val_is_int (height)) return false;
+				bitmapWidth = val_int (width);
+				bitmapHeight = val_int (height);
+				return (bitmapWidth == 0 && bitmapHeight == 0) || (bitmapWidth > 0 && bitmapHeight > 0);
+			}
+
+			QuadPoint ImplicitTextureExtent () const {
+				if (!bitmapWidth) return {0.0, 0.0};
+				QuadPoint minimum {positions[0], positions[1]};
+				QuadPoint maximum = minimum;
+				for (std::size_t offset = 2; offset < positions.size (); offset += 2) {
+					const double x = positions[offset];
+					const double y = positions[offset + 1];
+					if (x < minimum.x) minimum.x = x;
+					else if (x > maximum.x) maximum.x = x;
+					if (y < minimum.y) minimum.y = y;
+					else if (y > maximum.y) maximum.y = y;
+				}
+				return {maximum.x - minimum.x, maximum.y - minimum.y};
+			}
+
+			QuadPoint TextureCoordinates (int index, const double* position, const QuadPoint& extent) const {
+				if (textureStride > 0) {
+					const double* uv = textureValues.data () + index * textureStride;
+					return {uv[0], uv[1]};
+				}
+				if (!bitmapWidth) return {0.0, 0.0};
+				// Keep OpenFL's implicit-UV arithmetic, including degenerate geometry.
+				return {extent.x * (position[0] / extent.x) / bitmapWidth, extent.y * (position[1] / extent.y) / bitmapHeight};
+			}
+
+			std::vector<double> positions;
+			std::vector<int> indices;
+			std::vector<double> textureValues;
+			int vertexCount = 0;
+			int textureStride = 0;
+			int bitmapWidth = 0;
+			int bitmapHeight = 0;
+		};
+
+		class TriangleBufferUpload {
+		public:
+			bool Snapshot (value source, int vertexCount, int size, GLenum usage) {
+				if ((size != 4 && size != 6) || !MeshUploadTarget::Accepts (vertexCount, size) || !val_is_array (source)) return false;
+				vertexSize = size;
+				const int batchCount = val_array_size (source);
+				int captured = 0;
+				for (int index = 0; index < batchCount; ++index) {
+					TriangleBufferBatch batch;
+					if (!batch.Snapshot (val_array_i (source, index), vertexCount - captured, vertexSize)) return false;
+					captured += batch.Count ();
+					batches.emplace_back (std::move (batch));
+				}
+				return captured == vertexCount && target.Prepare (vertexCount, vertexSize, usage);
+			}
+
+			void operator() () {
+				const auto started = target.Begin ();
+				float* destination = target.Data ();
+				for (const auto& batch : batches) {
+					batch.Expand (destination, vertexSize);
+					destination += batch.Count () * vertexSize;
+				}
+				target.Upload ("triangle_buffer_upload", started);
+			}
+
+		private:
+			std::vector<TriangleBufferBatch> batches;
+			MeshUploadTarget target;
+			int vertexSize = 0;
+		};
+
+		class TileBufferUpload {
+		public:
+			bool Snapshot (value source, int flags, GLenum usage) {
+				if (flags < 0 || flags > 3 || !val_is_array (source)) return false;
+				const int attributeCount = ((flags & 1) ? 1 : 0) + ((flags & 2) ? 8 : 0);
+				vertexSize = 4 + attributeCount;
+				recordSize = 12 + attributeCount;
+				const int inputSize = val_array_size (source);
+				if (inputSize <= 0 || inputSize % recordSize != 0) return false;
+				const int tileCount = inputSize / recordSize;
+				return MeshUploadTarget::Accepts (tileCount, 4 * vertexSize)
+					&& CopyQuadArray (val_array_double (source), inputSize, records)
+					&& target.Prepare (tileCount, 4 * vertexSize, usage);
+			}
+
+			void operator() () {
+				const auto started = target.Begin ();
+				float* destination = target.Data ();
+				for (std::size_t offset = 0; offset < records.size (); offset += recordSize) {
+					ExpandTile (records.data () + offset, destination);
+					destination += 4 * vertexSize;
+				}
+				target.Upload ("tile_buffer_upload", started);
+			}
+
+		private:
+			void ExpandTile (const double* record, float* output) const {
+				QuadTransform matrix;
+				matrix.SetBasis (record);
+				const QuadPoint origin {record[4], record[5]};
+				matrix.WriteVertex (output, {0.0, 0.0}, origin, {record[8], record[9]});
+				matrix.WriteVertex (output + vertexSize, {record[6], 0.0}, origin, {record[10], record[9]});
+				matrix.WriteVertex (output + 2 * vertexSize, {0.0, record[7]}, origin, {record[8], record[11]});
+				matrix.WriteVertex (output + 3 * vertexSize, {record[6], record[7]}, origin, {record[10], record[11]});
+				for (int attribute = 4; attribute < vertexSize; ++attribute) {
+					const auto value = static_cast<float> (record[12 + attribute - 4]);
+					for (int vertex = 0; vertex < 4; ++vertex) output[vertex * vertexSize + attribute] = value;
+				}
+			}
+
+			std::vector<double> records;
+			MeshUploadTarget target;
+			int vertexSize = 0;
+			int recordSize = 0;
+		};
+
+		bool MeshUploadEnabled () {
+			const char* configured = std::getenv ("NOVAFLARE_MESH_UPLOAD");
+			return !configured || std::strcmp (configured, "0") != 0;
+		}
+
+		template<typename Upload, typename Capture>
+		bool TryQueueMeshUpload (const Capture& capture) {
+			static const bool enabled = MeshUploadEnabled ();
+			if (!enabled || !OpenGLBindings::renderThread || !OpenGLBindings::isMultiThreaded || !OpenGLBindings::CanRender ()) return false;
+			try {
+				Upload upload;
+				return capture (upload) && OpenGLBindings::renderThread->PushCommand (std::move (upload));
+			} catch (const std::bad_alloc&) {
+				return false;
+			} catch (const std::length_error&) {
+				return false;
+			}
+		}
+
+		constexpr int shaderFloatBytes = sizeof (GLfloat);
+
+		bool ValidShaderFloatCount (int count) {
+			return count > 0 && count <= (std::numeric_limits<int>::max) () / shaderFloatBytes;
+		}
+
+		bool ShaderInputsWorkerReady () {
+			static const bool enabled = [] () {
+				const char* configured = std::getenv ("NOVAFLARE_SHADER_INPUTS");
+				return !configured || std::strcmp (configured, "0") != 0;
+			} ();
+			return enabled && contextRouting == ContextRouting::Worker && OpenGLBindings::renderThread
+				&& OpenGLBindings::renderThread->IsRunning ();
+		}
+
+		struct ShaderInputTrace {
+			std::uint64_t frame = FrameTimeline::CurrentWork ();
+			const char* phase = FrameTimeline::IsUpdate () ? "update" : "render";
+
+			std::uint64_t Begin () const { return frame ? FrameTimeline::Now () : 0; }
+
+			void End (const char* event, std::uint64_t started, int packed, int bytes) const {
+				if (started) FrameTimeline::Write ({event, frame, started, FrameTimeline::Now (),
+					static_cast<std::uint64_t> (packed), static_cast<std::uint64_t> (bytes), "worker", 0, phase});
+			}
+		};
+
+		bool CopyShaderFloats (value source, int count, std::vector<double>& values) {
+			const auto* data = val_array_double (source);
+			if (!data) return false;
+			values.assign (data, data + count);
+			return true;
+		}
+
+		void PackShaderFloats (const std::vector<double>& source, GLfloat* output) {
+			std::transform (source.begin (), source.end (), output, [] (double number) { return static_cast<GLfloat> (number); });
+		}
+
+		class UniformMatrixUpload {
+		public:
+			bool Snapshot (int uniformLocation, int matrixDimension, value source) {
+				if (uniformLocation < 0 || matrixDimension < 2 || matrixDimension > 4 || !val_is_array (source)) return false;
+				const int matrixSize = matrixDimension * matrixDimension;
+				if (val_array_size (source) < matrixSize) return false;
+				const auto* data = val_array_double (source);
+				if (!data) return false;
+				std::memcpy (values, data, matrixSize * sizeof (double));
+				location = uniformLocation;
+				dimension = matrixDimension;
+				return true;
+			}
+
+			void operator() () {
+				const auto started = trace.Begin ();
+				const int size = dimension * dimension;
+				GLfloat converted[16];
+				std::transform (values, values + size, converted, [] (double number) { return static_cast<GLfloat> (number); });
+				switch (dimension) {
+					case 2: glUniformMatrix2fv (location, 1, GL_FALSE, converted); break;
+					case 3: glUniformMatrix3fv (location, 1, GL_FALSE, converted); break;
+					case 4: glUniformMatrix4fv (location, 1, GL_FALSE, converted); break;
+				}
+				trace.End ("uniform_matrix_pack", started, size, size * shaderFloatBytes);
+			}
+
+		private:
+			ShaderInputTrace trace;
+			double values[16] = {};
+			int location = -1;
+			int dimension = 0;
+		};
+
+		struct ProjectionAffine {
+			double m00, m10, m01, m11, translateX, translateY;
+
+			ProjectionAffine Concat (const ProjectionAffine& world) const {
+				return {
+					m00 * world.m00 + m10 * world.m01,
+					m00 * world.m10 + m10 * world.m11,
+					m01 * world.m00 + m11 * world.m01,
+					m01 * world.m10 + m11 * world.m11,
+					translateX * world.m00 + translateY * world.m01 + world.translateX,
+					translateX * world.m10 + translateY * world.m11 + world.translateY
+				};
+			}
+
+			bool AllowsAutoSnapping () const {
+				return m10 == 0 && m01 == 0 && m00 > 0.999 && m00 < 1.001 && m11 > 0.999 && m11 < 1.001;
+			}
+		};
+
+		double RoundProjectionOffset (double value) {
+			// hxcpp Math.round uses floor(value + 0.5) followed by a Haxe Int conversion.
+			const auto bits = static_cast<std::uint32_t> (static_cast<std::int64_t> (std::floor (value + 0.5)));
+			return bits < 0x80000000u ? static_cast<double> (bits) : static_cast<double> (bits) - 4294967296.0;
+		}
+
+		class ProjectionMatrixUpload {
+		public:
+			bool Snapshot (int uniformLocation, value source, int projectionFlags) {
+				if (uniformLocation < 0 || (projectionFlags & ~(snapMask | flipFlag)) != 0 || (projectionFlags & snapMask) == snapMask
+					|| !val_is_array (source) || val_array_size (source) != valueCount) return false;
+				const auto* data = val_array_double (source);
+				if (!data) return false;
+				std::memcpy (values, data, sizeof (values));
+				// Keep snapping within the range that hxcpp can convert through a signed 64-bit integer.
+				if ((projectionFlags & snapMask) != 0 && !std::all_of (values, values + affineValueCount, [] (double number) {
+					return number >= -1000000000.0 && number <= 1000000000.0;
+				})) return false;
+				location = uniformLocation;
+				flags = projectionFlags;
+				return true;
+			}
+
+			void operator() () const {
+				const auto started = trace.Begin ();
+				const ProjectionAffine object = {values[0], values[1], values[2], values[3], values[4], values[5]};
+				const ProjectionAffine world = {values[6], values[7], values[8], values[9], values[10], values[11]};
+				auto transform = object.Concat (world);
+				const int pixelSnapping = flags & snapMask;
+				if (pixelSnapping == snapAlways || (pixelSnapping == snapAuto && transform.AllowsAutoSnapping ())) {
+					transform.translateX = RoundProjectionOffset (transform.translateX);
+					transform.translateY = RoundProjectionOffset (transform.translateY);
+				}
+				const bool flipped = (flags & flipFlag) != 0;
+				const double projectionX = values[12];
+				const double projectionY = flipped ? -values[13] : values[13];
+				const GLfloat matrix[] = {
+					static_cast<GLfloat> (transform.m00 * projectionX), static_cast<GLfloat> (transform.m10 * projectionY), 0, 0,
+					static_cast<GLfloat> (transform.m01 * projectionX), static_cast<GLfloat> (transform.m11 * projectionY), 0, 0,
+					0, 0, -0.001f, 0,
+					static_cast<GLfloat> (transform.translateX * projectionX - 1),
+					static_cast<GLfloat> (transform.translateY * projectionY + (flipped ? 1 : -1)), 0, 1
+				};
+				glUniformMatrix4fv (location, 1, GL_FALSE, matrix);
+				trace.End ("projection_matrix_build", started, 16, sizeof (matrix));
+			}
+
+		private:
+			static constexpr int valueCount = 14;
+			static constexpr int affineValueCount = 12;
+			static constexpr int snapMask = 3;
+			static constexpr int snapAuto = 1;
+			static constexpr int snapAlways = 2;
+			static constexpr int flipFlag = 4;
+			ShaderInputTrace trace;
+			double values[valueCount] = {};
+			int location = -1;
+			int flags = 0;
+		};
+
+		char* ShaderParamBytes (value bytes, int offset, int floatCount) {
+			if (offset < 0 || !ValidShaderFloatCount (floatCount) || !val_is_object (bytes)) return nullptr;
+			static const int lengthField = val_id ("length");
+			static const int bytesField = val_id ("b");
+			const value declaredLength = val_field (bytes, lengthField);
+			if (!val_is_int (declaredLength)) return nullptr;
+			const auto backing = val_to_buffer (val_field (bytes, bytesField));
+			if (!backing) return nullptr;
+			const int length = (std::min) (val_int (declaredLength), buffer_size (backing));
+			if (offset > length || floatCount * shaderFloatBytes > length - offset) return nullptr;
+			char* data = buffer_data (backing);
+			return data ? data + offset : nullptr;
+		}
+
+		class ShaderParamSegment {
+		public:
+			bool Snapshot (value source, int previousEnd, int limit) {
+				if (!val_is_object (source) || !ReadRepetition (source)) return false;
+				static const int offsetField = val_id ("offset");
+				static const int valuesField = val_id ("values");
+				const value start = val_field (source, offsetField);
+				const value data = val_field (source, valuesField);
+				if (!val_is_int (start) || !val_is_array (data)) return false;
+				offset = val_int (start);
+				const int count = val_array_size (data);
+				return offset >= previousEnd && offset <= limit && count > 0 && count % components == 0
+					&& count <= (limit - offset) / repeat && CopyShaderFloats (data, count, values);
+			}
+
+			int Offset () const { return offset; }
+			int CompactCount () const { return static_cast<int> (values.size ()); }
+			int Count () const { return CompactCount () * repeat; }
+			int End () const { return offset + Count (); }
+			bool IsRepeated () const { return repeat > 1; }
+
+			void WriteValues (GLfloat* destination) const {
+				PackShaderFloats (values, destination + offset);
+			}
+
+			void WriteRepeated (GLfloat* destination) const {
+				RepeatToBytes (reinterpret_cast<char*> (destination + offset));
+			}
+
+			void WriteToBytes (char* destination) const {
+				char* position = destination + offset * shaderFloatBytes;
+				if (IsRepeated ()) {
+					RepeatToBytes (position);
+					return;
+				}
+				for (double value : values) {
+					const auto converted = static_cast<GLfloat> (value);
+					std::memcpy (position, &converted, sizeof (converted));
+					position += shaderFloatBytes;
+				}
+			}
+
+		private:
+			bool ReadRepetition (value source) {
+				static const int repeatField = val_id ("repeat");
+				static const int componentsField = val_id ("components");
+				const value repeatValue = val_field (source, repeatField);
+				const value componentsValue = val_field (source, componentsField);
+				if (val_is_int (repeatValue)) repeat = val_int (repeatValue);
+				else if (!val_is_null (repeatValue)) return false;
+				if (val_is_int (componentsValue)) components = val_int (componentsValue);
+				else if (!val_is_null (componentsValue)) return false;
+				return repeat > 0 && (components == 1 || components == 4);
+			}
+
+			void RepeatToBytes (char* destination) const {
+				const int tupleBytes = components * shaderFloatBytes;
+				const int compactCount = CompactCount ();
+				for (int start = 0; start < compactCount; start += components) {
+					GLfloat tuple[4];
+					for (int component = 0; component < components; ++component) {
+						tuple[component] = static_cast<GLfloat> (values[start + component]);
+					}
+					for (int vertex = 0; vertex < repeat; ++vertex) {
+						std::memcpy (destination, tuple, tupleBytes);
+						destination += tupleBytes;
+					}
+				}
+			}
+
+			int offset = 0;
+			int repeat = 1;
+			int components = 1;
+			std::vector<double> values;
+		};
+
+		class ShaderParamsSnapshot {
+		public:
+			bool Capture (value source, value bytes, int byteOffset, int floatCount) {
+				if (!ValidShaderFloatCount (floatCount) || !val_is_array (source)) return false;
+				const int segmentCount = val_array_size (source);
+				if (segmentCount <= 0 || segmentCount > floatCount) return false;
+				segments.reserve (segmentCount);
+				int previousEnd = 0;
+				for (int index = 0; index < segmentCount; ++index) {
+					ShaderParamSegment segment;
+					if (!segment.Snapshot (val_array_i (source, index), previousEnd, floatCount)) return false;
+					previousEnd = segment.End ();
+					packedCount += segment.Count ();
+					if (segment.IsRepeated ()) {
+						repeatedCompactCount += segment.CompactCount ();
+						repeatedExpandedCount += segment.Count ();
+					}
+					segments.emplace_back (std::move (segment));
+				}
+				output.reset (new (std::nothrow) GLfloat[floatCount]);
+				if (!output) return false;
+				length = floatCount;
+				const char* data = ShaderParamBytes (bytes, byteOffset, floatCount);
+				if (!data) return false;
+				CopyReadyRanges (data);
+				return true;
+			}
+
+			void Upload (GLenum usage, const ShaderInputTrace& trace) {
+				const auto started = trace.Begin ();
+				bool packedNow = false;
+				// A window change can leave commands pending on a different render worker.
+				std::call_once (packOnce, [this, &packedNow, &trace] () {
+					PackOutput (trace);
+					packedNow = true;
+				});
+				const int bytes = length * shaderFloatBytes;
+				glBufferData (GL_ARRAY_BUFFER, bytes, output.get (), usage);
+				trace.End (packedNow ? "shader_attribute_pack" : "shader_attribute_upload",
+					started, packedNow ? packedCount : length, bytes);
+			}
+
+			bool Materialize (value bytes, int byteOffset, int floatCount) const {
+				if (floatCount != length) return false;
+				char* destination = ShaderParamBytes (bytes, byteOffset, floatCount);
+				if (!destination) return false;
+				for (const auto& segment : segments) segment.WriteToBytes (destination);
+				return true;
+			}
+
+		private:
+			void PackOutput (const ShaderInputTrace& trace) {
+				for (const auto& segment : segments) {
+					if (!segment.IsRepeated ()) segment.WriteValues (output.get ());
+				}
+				if (!repeatedExpandedCount) return;
+				const auto started = trace.Begin ();
+				for (const auto& segment : segments) {
+					if (segment.IsRepeated ()) segment.WriteRepeated (output.get ());
+				}
+				trace.End ("shader_quad_attribute_expand", started, repeatedCompactCount, repeatedExpandedCount);
+			}
+
+			void CopyReadyRanges (const char* data) {
+				int previousEnd = 0;
+				for (const auto& segment : segments) {
+					CopyReadyRange (data, previousEnd, segment.Offset ());
+					previousEnd = segment.End ();
+				}
+				CopyReadyRange (data, previousEnd, length);
+			}
+
+			void CopyReadyRange (const char* data, int start, int end) {
+				if (end > start) std::memcpy (output.get () + start, data + start * shaderFloatBytes, (end - start) * shaderFloatBytes);
+			}
+
+			std::vector<ShaderParamSegment> segments;
+			std::unique_ptr<GLfloat[]> output;
+			std::once_flag packOnce;
+			int length = 0;
+			int packedCount = 0;
+			int repeatedCompactCount = 0;
+			int repeatedExpandedCount = 0;
+		};
+
+		std::shared_ptr<ShaderParamsSnapshot> CaptureShaderParams (value segments, value bytes, int byteOffset, int floatCount) {
+			try {
+				auto snapshot = std::make_shared<ShaderParamsSnapshot> ();
+				if (!snapshot->Capture (segments, bytes, byteOffset, floatCount)) return {};
+				return snapshot;
+			} catch (const std::bad_alloc&) {
+				return {};
+			} catch (const std::length_error&) {
+				return {};
+			}
+		}
+
+		struct ShaderParamsTicket {
+			explicit ShaderParamsTicket (std::shared_ptr<ShaderParamsSnapshot> snapshot) : snapshot (std::move (snapshot)) {}
+			std::shared_ptr<ShaderParamsSnapshot> snapshot;
+		};
+
+		vkind ShaderParamsTicketKind () {
+			static vkind kind = alloc_kind ();
+			return kind;
+		}
+
+		ShaderParamsTicket* ShaderParamsTicketFromValue (value ticket) {
+			if (!val_is_abstract (ticket)) return nullptr;
+			return static_cast<ShaderParamsTicket*> (val_to_kind (ticket, ShaderParamsTicketKind ()));
+		}
+
+		void FinalizeShaderParamsTicket (value ticket) {
+			delete ShaderParamsTicketFromValue (ticket);
 		}
 
 		bool RemoveGLObjectID (void* object, GLObjectType type, GLuint id) {
@@ -829,6 +1590,141 @@ namespace lime {
 		glBlitFramebuffer (srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
 		#endif
 
+	}
+
+
+	bool lime_gl_queue_quad_buffer (value batches, int quadCount, int usage) {
+		static const bool enabled = QuadBufferUploadEnabled ();
+		if (!enabled || !OpenGLBindings::renderThread || !OpenGLBindings::isMultiThreaded || !OpenGLBindings::CanRender ()
+			|| quadCount <= 0 || quadCount > (std::numeric_limits<int>::max) () / quadBytes || !val_is_array (batches)) return false;
+
+		try {
+			QuadBufferUpload upload;
+			const int batchCount = val_array_size (batches);
+			int capturedQuads = 0;
+			for (int batchIndex = 0; batchIndex < batchCount; ++batchIndex) {
+				QuadBufferBatch batch;
+				if (!batch.Snapshot (val_array_i (batches, batchIndex), quadCount - capturedQuads)) return false;
+				if (batch.Count () == 0) continue;
+				capturedQuads += batch.Count ();
+				upload.batches.emplace_back (std::move (batch));
+			}
+			if (capturedQuads != quadCount) return false;
+
+			// Reserve uninitialized output so allocation failure can use the Haxe path.
+			upload.vertices.reset (new (std::nothrow) float[quadCount * quadVertexFloats]);
+			if (!upload.vertices) return false;
+			upload.quadCount = quadCount;
+			upload.usage = usage;
+			upload.frame = FrameTimeline::CurrentWork ();
+			upload.phase = FrameTimeline::IsUpdate () ? "update" : "render";
+			return OpenGLBindings::renderThread->PushCommand (std::move (upload));
+		} catch (const std::bad_alloc&) {
+			return false;
+		} catch (const std::length_error&) {
+			return false;
+		}
+	}
+
+
+	bool lime_gl_queue_triangle_buffer (value batches, int vertexCount, int vertexSize, int usage) {
+		return TryQueueMeshUpload<TriangleBufferUpload> ([=] (TriangleBufferUpload& upload) {
+			return upload.Snapshot (batches, vertexCount, vertexSize, usage);
+		});
+	}
+
+
+	bool lime_gl_queue_tile_buffer (value records, int flags, int usage) {
+		return TryQueueMeshUpload<TileBufferUpload> ([=] (TileBufferUpload& upload) {
+			return upload.Snapshot (records, flags, usage);
+		});
+	}
+
+
+	bool lime_gl_queue_uniform_matrix (int location, int dimension, value values) {
+		if (!ShaderInputsWorkerReady ()) return false;
+		try {
+			UniformMatrixUpload upload;
+			return upload.Snapshot (location, dimension, values) && OpenGLBindings::renderThread->PushCommand (std::move (upload));
+		} catch (const std::bad_alloc&) {
+			return false;
+		} catch (const std::length_error&) {
+			return false;
+		}
+	}
+
+
+	bool lime_gl_queue_projection_matrix (int location, value values, int flags) {
+		if (!ShaderInputsWorkerReady ()) return false;
+		try {
+			ProjectionMatrixUpload upload;
+			return upload.Snapshot (location, values, flags) && OpenGLBindings::renderThread->PushCommand (std::move (upload));
+		} catch (const std::bad_alloc&) {
+			return false;
+		} catch (const std::length_error&) {
+			return false;
+		}
+	}
+
+
+	bool lime_gl_shader_attribute_repetition () {
+		return ShaderInputsWorkerReady ();
+	}
+
+
+	value lime_gl_snapshot_shader_params (value segments, value bytes, int byteOffset, int floatCount) {
+		if (!ShaderInputsWorkerReady ()) return alloc_null ();
+		auto snapshot = CaptureShaderParams (segments, bytes, byteOffset, floatCount);
+		if (!snapshot) return alloc_null ();
+		try {
+			std::unique_ptr<ShaderParamsTicket> holder (new ShaderParamsTicket (std::move (snapshot)));
+			const value ticket = alloc_abstract (ShaderParamsTicketKind (), holder.get ());
+			if (val_is_null (ticket)) return alloc_null ();
+			val_gc (ticket, FinalizeShaderParamsTicket);
+			holder.release ();
+			return ticket;
+		} catch (const std::bad_alloc&) {
+			return alloc_null ();
+		}
+	}
+
+
+	bool lime_gl_recapture_shader_params (value ticket, value segments, value view, int floatCount) {
+		if (!ShaderInputsWorkerReady () || !ValidShaderFloatCount (floatCount) || !val_is_object (view)) return false;
+		auto* holder = ShaderParamsTicketFromValue (ticket);
+		if (!holder) return false;
+		static const int bufferField = val_id ("buffer");
+		static const int offsetField = val_id ("byteOffset");
+		static const int lengthField = val_id ("byteLength");
+		const value offset = val_field (view, offsetField);
+		const value length = val_field (view, lengthField);
+		if (!val_is_int (offset) || !val_is_int (length) || val_int (length) < floatCount * shaderFloatBytes) return false;
+		auto snapshot = CaptureShaderParams (segments, val_field (view, bufferField), val_int (offset), floatCount);
+		if (!snapshot) return false;
+		holder->snapshot = std::move (snapshot);
+		return true;
+	}
+
+
+	bool lime_gl_queue_shader_params (value ticket, int usage) {
+		if (!ShaderInputsWorkerReady ()) return false;
+		const auto* holder = ShaderParamsTicketFromValue (ticket);
+		if (!holder) return false;
+		try {
+			const ShaderInputTrace trace;
+			auto snapshot = holder->snapshot;
+			return QueueGLCommand (std::move (snapshot), [=] (const std::shared_ptr<ShaderParamsSnapshot>& input) {
+				input->Upload (static_cast<GLenum> (usage), trace);
+			});
+		} catch (const std::bad_alloc&) {
+			return false;
+		}
+	}
+
+
+	bool lime_gl_materialize_shader_params (value ticket, value bytes, int byteOffset, int floatCount) {
+		const auto* holder = ShaderParamsTicketFromValue (ticket);
+		return holder && holder->snapshot->Materialize (bytes, byteOffset, floatCount);
 	}
 
 
@@ -8506,6 +9402,16 @@ namespace lime {
 	DEFINE_PRIME2v (lime_gl_blend_func);
 	DEFINE_PRIME4v (lime_gl_blend_func_separate);
 	DEFINE_PRIME10v (lime_gl_blit_framebuffer);
+	DEFINE_PRIME3 (lime_gl_queue_quad_buffer);
+	DEFINE_PRIME4 (lime_gl_queue_triangle_buffer);
+	DEFINE_PRIME3 (lime_gl_queue_tile_buffer);
+	DEFINE_PRIME3 (lime_gl_queue_uniform_matrix);
+	DEFINE_PRIME3 (lime_gl_queue_projection_matrix);
+	DEFINE_PRIME0 (lime_gl_shader_attribute_repetition);
+	DEFINE_PRIME4 (lime_gl_snapshot_shader_params);
+	DEFINE_PRIME4 (lime_gl_recapture_shader_params);
+	DEFINE_PRIME2 (lime_gl_queue_shader_params);
+	DEFINE_PRIME4 (lime_gl_materialize_shader_params);
 	DEFINE_PRIME4v (lime_gl_buffer_data);
 	DEFINE_PRIME4v (lime_gl_buffer_sub_data);
 	DEFINE_PRIME1 (lime_gl_check_framebuffer_status);

@@ -52,6 +52,138 @@ typedef CFFIPointer = Dynamic;
 #end
 class NativeCFFI
 {
+	#if (cpp && lime && lime_cffi && !disable_cffi && !macro && (lime_opengl || lime_opengles))
+	private static var queueQuadBuffer:Dynamic;
+	private static var quadBufferUploadResolved = false;
+
+	@:noCompletion public static function tryQueueQuadBuffer(batches:Dynamic, quadCount:Int, usage:Int):Bool
+	{
+		if (!quadBufferUploadResolved)
+		{
+			quadBufferUploadResolved = true;
+			try
+			{
+				queueQuadBuffer = CFFI.load("lime", "lime_gl_queue_quad_buffer", 3);
+			}
+			catch (_:Dynamic)
+			{
+				queueQuadBuffer = null;
+			}
+		}
+		return queueQuadBuffer != null && queueQuadBuffer(batches, quadCount, usage) == true;
+	}
+
+	private static var queueTriangleBuffer:Dynamic;
+	private static var triangleBufferUploadResolved = false;
+	private static var queueTileBuffer:Dynamic;
+	private static var tileBufferUploadResolved = false;
+
+	@:noCompletion public static function tryQueueTriangleBuffer(batches:Dynamic, vertexCount:Int, vertexSize:Int, usage:Int):Bool
+	{
+		if (!triangleBufferUploadResolved)
+		{
+			triangleBufferUploadResolved = true;
+			queueTriangleBuffer = loadOptionalGLBinding("lime_gl_queue_triangle_buffer", 4);
+		}
+		return queueTriangleBuffer != null && queueTriangleBuffer(batches, vertexCount, vertexSize, usage) == true;
+	}
+
+	@:noCompletion public static function tryQueueTileBuffer(records:Dynamic, flags:Int, usage:Int):Bool
+	{
+		if (!tileBufferUploadResolved)
+		{
+			tileBufferUploadResolved = true;
+			queueTileBuffer = loadOptionalGLBinding("lime_gl_queue_tile_buffer", 3);
+		}
+		return queueTileBuffer != null && queueTileBuffer(records, flags, usage) == true;
+	}
+
+	#if !lime_webgl
+	private static var queueUniformMatrix:Dynamic;
+	private static var uniformMatrixResolved = false;
+	private static var queueProjectionMatrix:Dynamic;
+	private static var projectionMatrixResolved = false;
+	private static var shaderAttributeRepetition:Dynamic;
+	private static var snapshotShaderParams:Dynamic;
+	private static var recaptureShaderParams:Dynamic;
+	private static var queueShaderParams:Dynamic;
+	private static var writeShaderParams:Dynamic;
+	private static var shaderParamsResolved = false;
+
+	@:noCompletion public static function tryQueueUniformMatrix(location:Int, dimension:Int, values:Array<Float>):Bool
+	{
+		if (!uniformMatrixResolved)
+		{
+			uniformMatrixResolved = true;
+			queueUniformMatrix = loadOptionalGLBinding("lime_gl_queue_uniform_matrix", 3);
+		}
+		return queueUniformMatrix != null && queueUniformMatrix(location, dimension, values) == true;
+	}
+
+	@:noCompletion public static function tryQueueProjectionMatrix(location:Int, values:Array<Float>, flags:Int):Bool
+	{
+		if (!projectionMatrixResolved)
+		{
+			projectionMatrixResolved = true;
+			queueProjectionMatrix = loadOptionalGLBinding("lime_gl_queue_projection_matrix", 3);
+		}
+		return queueProjectionMatrix != null && queueProjectionMatrix(location, values, flags) == true;
+	}
+
+	@:noCompletion public static function supportsShaderAttributeRepetition():Bool
+	{
+		return resolveShaderParams() && shaderAttributeRepetition != null && shaderAttributeRepetition() == true;
+	}
+
+	@:noCompletion public static function trySnapshotShaderParams(segments:Dynamic, buffer:Dynamic, byteOffset:Int, floatCount:Int):Dynamic
+	{
+		return resolveShaderParams() ? snapshotShaderParams(segments, buffer, byteOffset, floatCount) : null;
+	}
+
+	@:noCompletion public static function tryRecaptureShaderParams(ticket:Dynamic, segments:Dynamic, view:lime.utils.ArrayBufferView, floatCount:Int):Bool
+	{
+		return ticket != null && view != null && resolveShaderParams() && recaptureShaderParams != null
+			&& recaptureShaderParams(ticket, segments, view, floatCount) == true;
+	}
+
+	@:noCompletion public static function tryQueueShaderParams(snapshot:Dynamic, usage:Int):Bool
+	{
+		return queueShaderParams != null && queueShaderParams(snapshot, usage) == true;
+	}
+
+	@:noCompletion public static function materializeShaderParams(snapshot:Dynamic, buffer:Dynamic, byteOffset:Int, floatCount:Int):Bool
+	{
+		return writeShaderParams != null && writeShaderParams(snapshot, buffer, byteOffset, floatCount) == true;
+	}
+
+	private static function resolveShaderParams():Bool
+	{
+		if (!shaderParamsResolved)
+		{
+			shaderParamsResolved = true;
+			shaderAttributeRepetition = loadOptionalGLBinding("lime_gl_shader_attribute_repetition", 0);
+			snapshotShaderParams = loadOptionalGLBinding("lime_gl_snapshot_shader_params", 4);
+			recaptureShaderParams = loadOptionalGLBinding("lime_gl_recapture_shader_params", 4);
+			queueShaderParams = loadOptionalGLBinding("lime_gl_queue_shader_params", 2);
+			writeShaderParams = loadOptionalGLBinding("lime_gl_materialize_shader_params", 4);
+		}
+		return snapshotShaderParams != null && queueShaderParams != null && writeShaderParams != null;
+	}
+	#end
+
+	private static function loadOptionalGLBinding(symbol:String, arity:Int):Dynamic
+	{
+		try
+		{
+			return CFFI.load("lime", symbol, arity);
+		}
+		catch (_:Dynamic)
+		{
+			return null;
+		}
+	}
+	#end
+
 	#if (cpp && lime_cffi && !disable_cffi && !macro)
 	private static var queuePackedTextureImage2D:Dynamic;
 	private static var packedTextureUploadResolved = false;

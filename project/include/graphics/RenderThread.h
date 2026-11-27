@@ -218,6 +218,9 @@ namespace lime {
 
         bool IsRenderThread() const;
         bool IsRunning() const { return running; }
+#ifdef ANDROID
+        void WaitForPendingFrames(std::chrono::nanoseconds timeout);
+#endif
         bool MakeCurrent();
         bool SetSwapInterval(int interval, bool useWorker = false);
         bool ApplySwapInterval();

@@ -273,6 +273,7 @@
 			<compilerflag value="-DHAVE_STDIO_H" unless="windows" />
 
 			<file name="src/backend/sdl/SDLApplication.cpp">
+				<depend name="src/backend/sdl/SDLApplication.h" />
 				<depend name="include/graphics/RenderThread.h" />
 			</file>
 			<file name="src/backend/sdl/SDLGamepad.cpp" />
@@ -281,6 +282,7 @@
 			<file name="src/backend/sdl/SDLMutex.cpp" />
 			<file name="src/backend/sdl/SDLSystem.cpp" />
 			<file name="src/backend/sdl/SDLWindow.cpp">
+				<depend name="src/backend/sdl/SDLApplication.h" />
 				<depend name="include/graphics/RenderThread.h" />
 			</file>
 
@@ -403,6 +405,7 @@
 	<target id="lime" output="${LIBPREFIX}lime${DEBUGEXTRA}${LIBSUFFIX}" tool="linker" toolid="${STD_MODULE_LINK}">
 
 		<outdir name="${OUTPUT_DIR}/${BINDIR}" />
+		<depend name="${HXCPP}/toolchain/android-toolchain-clang.xml" if="android HXCPP_ARM64 || android HXCPP_X86_64" unless="static_link" />
 
 		<files id="lime" />
 		<files id="android-cpufeatures" if="android" />

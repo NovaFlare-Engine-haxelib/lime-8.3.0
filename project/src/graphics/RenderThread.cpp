@@ -344,6 +344,14 @@ namespace lime {
         return nullptr;
     }
 
+#ifdef ANDROID
+    void RenderThread::WaitForPendingFrames(std::chrono::nanoseconds timeout) {
+        std::unique_lock<std::mutex> lock(mutex);
+        condition.wait_for(lock, timeout, [this] {
+            return !running || activePendingFrames.load(std::memory_order_acquire) == 0;
+        });
+    }
+#endif
     void RenderThread::ReturnFrame(Frame* frame) {
         frame->commands.clear();
         std::lock_guard<std::mutex> lock(mutex);
